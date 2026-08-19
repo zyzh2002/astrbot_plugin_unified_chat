@@ -1,10 +1,13 @@
 """E2E contract checks for the real AstrBot tool API (run inside Docker).
 
 Skipped outside AstrBot runtime: `astrbot` is not installed in the dev venv.
+
+NOTE: import astrbot.api FIRST (AstrBot import graph is order-sensitive).
 """
 
 import pytest
 
+pytest.importorskip("astrbot.api")
 astrbot_tool = pytest.importorskip("astrbot.core.agent.tool")
 FunctionTool = astrbot_tool.FunctionTool
 ToolSet = astrbot_tool.ToolSet

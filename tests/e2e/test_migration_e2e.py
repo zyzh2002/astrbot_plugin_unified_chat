@@ -1,10 +1,15 @@
 """E2E contract checks for migration APIs (run inside Docker AstrBot).
 
 Skipped outside AstrBot runtime.
+
+NOTE: import astrbot.api FIRST — AstrBot's import graph is order-sensitive
+and deep submodule imports (e.g. kb_helper) fail with a circular import
+unless astrbot.api is initialized first.
 """
 
 import pytest
 
+pytest.importorskip("astrbot.api")
 kb_helper_mod = pytest.importorskip("astrbot.core.knowledge_base.kb_helper")
 provider_entities = pytest.importorskip("astrbot.core.provider.entities")
 
