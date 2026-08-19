@@ -39,9 +39,36 @@ fn score_importance(char_len: usize, recency_hours: f64, freq: usize) -> f64 {
     (len_score + recency + freq_score).clamp(0.0, 1.0)
 }
 
+/// FNV-1a 64-bit dedup hash, lowercase hex, deterministic.
+#[pyfunction]
+fn hash_dedup(text: &str) -> String {
+    let mut h: u64 = 0xcbf29ce484222325;
+    for b in text.as_bytes() {
+        h ^= *b as u64;
+        h = h.wrapping_mul(0x100000001b3);
+    }
+    format!("{h:016x}")
+}
+
 #[pymodule]
 fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(chunk_text, m)?)?;
     m.add_function(wrap_pyfunction!(score_importance, m)?)?;
+    m.add_function(wrap_pyfunction!(hash_dedup, m)?)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hash_dedup_known_vector() {
+        assert_eq!(hash_dedup("hello"), "a430d84680aabd0b");
+    }
+
+    #[test]
+    fn hash_dedup_empty() {
+        assert_eq!(hash_dedup(""), "cbf29ce484222325");
+    }
 }

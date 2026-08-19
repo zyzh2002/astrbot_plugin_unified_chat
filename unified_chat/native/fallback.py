@@ -31,3 +31,12 @@ def score_importance(char_len: int, recency_hours: float, freq: int) -> float:
     recency = math.exp(-recency_hours / 72.0) * 0.4
     freq_score = min(freq / 10.0, 1.0) * 0.3
     return max(0.0, min(1.0, len_score + recency + freq_score))
+
+
+def hash_dedup(text: str) -> str:
+    """FNV-1a 64-bit hash, lowercase hex (bit-identical to Rust impl)."""
+    h = 0xCBF29CE484222325
+    for b in text.encode("utf-8"):
+        h ^= b
+        h = (h * 0x100000001B3) & 0xFFFFFFFFFFFFFFFF
+    return f"{h:016x}"
