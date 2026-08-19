@@ -22,6 +22,7 @@ class PluginLifecycle:
         self._status = "created"
         self._config: PluginConfig | None = None
         self._data_dir: Path | None = None
+        self._rag_service = None
 
     async def on_load(self):
         try:
@@ -56,6 +57,10 @@ class PluginLifecycle:
             db_path = data_dir / "unified_chat.db"
             await get_engine(db_path)
             self._status = "loaded"
+
+            from unified_chat.services.rag_service import RagService
+
+            self._rag_service = RagService(self.context)
         except Exception as e:  # pragma: no cover - defensive
             try:
                 from astrbot.api import logger  # type: ignore
@@ -77,9 +82,17 @@ class PluginLifecycle:
         _ = event
 
     async def handle_llm_request(self, event: AstrMessageEvent, req):
-        # TODO: agentic RAG: inject KnowledgeBaseQueryTool if rag_agentic
-        _ = event
-        _ = req
+        if self._config is None or self._rag_service is None:
+            return
+        try:
+            from unified_chat.core.hooks import inject_kb_tool
+
+            await inject_kb_tool(event, req, self._config, self._rag_service)
+        except Exception:
+            with contextlib.suppress(Exception):
+                from astrbot.api import logger  # type: ignore
+
+                logger.error("[unified_chat] handle_llm_request failed", exc_info=True)
 
     def get_status(self) -> str:
         if self._config is not None and self._data_dir is not None:
