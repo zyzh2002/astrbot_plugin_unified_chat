@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import contextlib
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from astrbot.api.event import AstrMessageEvent
@@ -22,7 +22,9 @@ class PluginLifecycle:
         self._status = "created"
         self._config: PluginConfig | None = None
         self._data_dir: Path | None = None
-        self._rag_service = None
+        self._rag_service: Any | None = None
+        self._chat_service: Any | None = None
+        self._pipeline: Any | None = None
 
     async def on_load(self):
         try:
@@ -61,6 +63,12 @@ class PluginLifecycle:
             from unified_chat.services.rag_service import RagService
 
             self._rag_service = RagService(self.context)
+
+            from unified_chat.core.pipeline import MessagePipeline
+            from unified_chat.services.chat_service import ChatService
+
+            self._chat_service = ChatService()
+            self._pipeline = MessagePipeline(config, self._chat_service)
         except Exception as e:  # pragma: no cover - defensive
             try:
                 from astrbot.api import logger  # type: ignore
@@ -78,21 +86,45 @@ class PluginLifecycle:
         self._status = "unloaded"
 
     async def handle_message(self, event: AstrMessageEvent):
-        # TODO: pipeline: dedup -> filter -> affection -> memory -> learning (background tasks)
-        _ = event
-
-    async def handle_llm_request(self, event: AstrMessageEvent, req):
-        if self._config is None or self._rag_service is None:
+        if self._pipeline is None:
             return
         try:
-            from unified_chat.core.hooks import inject_kb_tool
-
-            await inject_kb_tool(event, req, self._config, self._rag_service)
+            await self._pipeline.process(event)
         except Exception:
             with contextlib.suppress(Exception):
                 from astrbot.api import logger  # type: ignore
 
-                logger.error("[unified_chat] handle_llm_request failed", exc_info=True)
+                logger.error("[unified_chat] handle_message failed", exc_info=True)
+
+    async def handle_llm_request(self, event: AstrMessageEvent, req):
+        if self._config is None:
+            return
+        if self._rag_service is not None:
+            try:
+                from unified_chat.core.hooks import inject_kb_tool
+
+                await inject_kb_tool(event, req, self._config, self._rag_service)
+            except Exception:
+                with contextlib.suppress(Exception):
+                    from astrbot.api import logger  # type: ignore
+
+                    logger.error(
+                        "[unified_chat] handle_llm_request failed", exc_info=True
+                    )
+        if self._chat_service is not None:
+            try:
+                from unified_chat.core.hooks import inject_social_context
+
+                await inject_social_context(
+                    event, req, self._config, self._chat_service
+                )
+            except Exception:
+                with contextlib.suppress(Exception):
+                    from astrbot.api import logger  # type: ignore
+
+                    logger.error(
+                        "[unified_chat] inject_social_context failed", exc_info=True
+                    )
 
     def get_status(self) -> str:
         if self._config is not None and self._data_dir is not None:
