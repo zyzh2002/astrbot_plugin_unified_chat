@@ -18,7 +18,8 @@ Docker 不影响单测，单测已 mock `Context`。
 
 ## 监控
 
-- `/unified_status` - 学习统计、记忆条数、RAG 状态
+- `/unified_status` - 运行状态、记忆条数、消息数、学习流水各阶段统计、迁移标记
+- `/unified_migrate <kb_name>` - 后台全量重建 KB 索引（更换嵌入模型后使用）
 - 日志 `astrbot.api.logger`，关键词 `unified_chat`
 
 ## 备份
