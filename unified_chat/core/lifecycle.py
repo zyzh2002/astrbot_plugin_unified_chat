@@ -25,6 +25,8 @@ class PluginLifecycle:
         self._rag_service: Any | None = None
         self._chat_service: Any | None = None
         self._pipeline: Any | None = None
+        self._memory_service: Any | None = None
+        self._cron: Any | None = None
 
     async def on_load(self):
         try:
@@ -68,7 +70,18 @@ class PluginLifecycle:
             from unified_chat.services.chat_service import ChatService
 
             self._chat_service = ChatService()
-            self._pipeline = MessagePipeline(config, self._chat_service)
+
+            from unified_chat.services.memory_service import MemoryService
+
+            self._memory_service = MemoryService(self.context, config)
+            await self._memory_service.ensure_memory_kb()
+
+            self._pipeline = MessagePipeline(config, self._chat_service, self._memory_service)
+
+            from unified_chat.core.cron import MemoryCleanupCron
+
+            self._cron = MemoryCleanupCron(self._memory_service)
+            self._cron.start()
         except Exception as e:  # pragma: no cover - defensive
             try:
                 from astrbot.api import logger  # type: ignore
@@ -79,6 +92,9 @@ class PluginLifecycle:
             self._status = f"load_failed: {e}"
 
     async def on_unload(self):
+        with contextlib.suppress(Exception):
+            if self._cron is not None:
+                self._cron.stop()
         with contextlib.suppress(Exception):
             from unified_chat.storage.database import close_engine
 
@@ -108,23 +124,27 @@ class PluginLifecycle:
                 with contextlib.suppress(Exception):
                     from astrbot.api import logger  # type: ignore
 
-                    logger.error(
-                        "[unified_chat] handle_llm_request failed", exc_info=True
-                    )
+                    logger.error("[unified_chat] handle_llm_request failed", exc_info=True)
         if self._chat_service is not None:
             try:
                 from unified_chat.core.hooks import inject_social_context
 
-                await inject_social_context(
-                    event, req, self._config, self._chat_service
-                )
+                await inject_social_context(event, req, self._config, self._chat_service)
             except Exception:
                 with contextlib.suppress(Exception):
                     from astrbot.api import logger  # type: ignore
 
-                    logger.error(
-                        "[unified_chat] inject_social_context failed", exc_info=True
-                    )
+                    logger.error("[unified_chat] inject_social_context failed", exc_info=True)
+        if self._memory_service is not None:
+            try:
+                from unified_chat.core.hooks import inject_memories
+
+                await inject_memories(event, req, self._config, self._memory_service)
+            except Exception:
+                with contextlib.suppress(Exception):
+                    from astrbot.api import logger  # type: ignore
+
+                    logger.error("[unified_chat] inject_memories failed", exc_info=True)
 
     def get_status(self) -> str:
         if self._config is not None and self._data_dir is not None:

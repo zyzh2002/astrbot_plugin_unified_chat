@@ -54,3 +54,29 @@ async def inject_social_context(event: Any, req: Any, config: Any, chat_service:
             from astrbot.api import logger  # type: ignore
 
             logger.error("[unified_chat] inject_social_context failed", exc_info=True)
+
+
+async def inject_memories(event: Any, req: Any, config: Any, memory_service: Any) -> None:
+    """Append retrieved memories as a system message to req.contexts.
+
+    Gated by enable_persistent_memory. Never raises.
+    """
+    if not config.enable_persistent_memory:
+        return
+    try:
+        text = getattr(event, "message_str", "")
+        if not text:
+            return
+        memories = await memory_service.retrieve(text)
+        if not memories:
+            return
+        contexts = getattr(req, "contexts", None)
+        if contexts is None:
+            contexts = []
+            req.contexts = contexts
+        contexts.append({"role": "system", "content": f"Relevant memories:\n{memories}"})
+    except Exception:
+        with contextlib.suppress(Exception):
+            from astrbot.api import logger  # type: ignore
+
+            logger.error("[unified_chat] inject_memories failed", exc_info=True)
