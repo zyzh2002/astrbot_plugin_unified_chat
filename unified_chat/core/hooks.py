@@ -31,3 +31,26 @@ async def inject_kb_tool(event: Any, req: Any, config: Any, rag_service: Any) ->
             from astrbot.api import logger  # type: ignore
 
             logger.error("[unified_chat] inject_kb_tool failed", exc_info=True)
+
+
+async def inject_social_context(event: Any, req: Any, config: Any, chat_service: Any) -> None:
+    """Append a per-group social context system message to req.contexts.
+
+    Gated by enable_conversation_enhance. Never raises.
+    """
+    if not config.enable_conversation_enhance:
+        return
+    try:
+        social = chat_service.social_context(event)
+        if not social:
+            return
+        contexts = getattr(req, "contexts", None)
+        if contexts is None:
+            contexts = []
+            req.contexts = contexts
+        contexts.append({"role": "system", "content": social})
+    except Exception:
+        with contextlib.suppress(Exception):
+            from astrbot.api import logger  # type: ignore
+
+            logger.error("[unified_chat] inject_social_context failed", exc_info=True)
