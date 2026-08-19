@@ -10,6 +10,12 @@ from pydantic.dataclasses import dataclass
 def _install_astrbot_tool_stub():
     if "astrbot.core.agent.tool" in sys.modules:
         return
+    try:
+        import astrbot.core.agent.tool  # noqa: F401
+
+        return  # real AstrBot available (e.g. Docker); keep it
+    except ImportError:
+        pass
     pkg = types.ModuleType("astrbot.core.agent.tool")
 
     @dataclass
