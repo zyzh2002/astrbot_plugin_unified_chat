@@ -61,6 +61,59 @@ class MemoryRepo:
             await session.commit()
             return len(rows)
 
+    @staticmethod
+    async def list_expired(threshold: float, cutoff: datetime) -> list[Memory]:
+        async with get_session() as session:
+            rows = (
+                await session.exec(
+                    select(Memory)
+                    .where(Memory.importance < threshold)
+                    .where(Memory.created_at < cutoff)
+                )
+            ).all()
+            return list(rows)
+
+    @staticmethod
+    async def delete_by_ids(ids: list[int]) -> int:
+        if not ids:
+            return 0
+        async with get_session() as session:
+            rows = (
+                await session.exec(select(Memory).where(Memory.id.in_(ids)))  # type: ignore[attr-defined]
+            ).all()
+            for r in rows:
+                await session.delete(r)
+            await session.commit()
+            return len(rows)
+
+    @staticmethod
+    async def search_by_keyword(keyword: str, limit: int = 5) -> list[Memory]:
+        escaped = (
+            keyword.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        )
+        async with get_session() as session:
+            rows = (
+                await session.exec(
+                    select(Memory)
+                    .where(Memory.content.like(f"%{escaped}%", escape="\\"))
+                    .order_by(Memory.importance.desc())
+                    .limit(limit)
+                )
+            ).all()
+            return list(rows)
+
+    @staticmethod
+    async def update_kb_doc_id(memory_id: int, kb_doc_id: str) -> Memory | None:
+        async with get_session() as session:
+            mem = await session.get(Memory, memory_id)
+            if mem is None:
+                return None
+            mem.kb_doc_id = kb_doc_id
+            session.add(mem)
+            await session.commit()
+            await session.refresh(mem)
+            return mem
+
 
 class LearningLogRepo:
     """Persistence for LearningLog."""
