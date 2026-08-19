@@ -4,7 +4,11 @@ version = "0.1.0"
 description = "Unified conversational intelligence for AstrBot"
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "aiosqlite>=0.20",
+    "sqlalchemy>=2.0",
+    "sqlmodel>=0.0.22",
+]
 
 [project.optional-dependencies]
 dev = [
@@ -32,6 +36,16 @@ rustflags = ["-C", "target-cpu=x86-64-v3"]
 [tool.ruff]
 line-length = 100
 target-version = "py312"
+
+[tool.pyright]
+venvPath = "."
+venv = ".venv"
+typeCheckingMode = "basic"
+reportMissingImports = "none"
+reportMissingTypeStubs = "none"
+reportAttributeAccessIssue = "none"
+reportAssignmentType = "none"
+extraPaths = ["./"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "SIM"]
