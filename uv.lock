@@ -33,6 +33,7 @@ dependencies = [
 [package.optional-dependencies]
 dev = [
     { name = "maturin" },
+    { name = "pydantic" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "pytest-cov" },
@@ -44,6 +45,7 @@ dev = [
 requires-dist = [
     { name = "aiosqlite", specifier = ">=0.20" },
     { name = "maturin", marker = "extra == 'dev'", specifier = ">=1.7" },
+    { name = "pydantic", marker = "extra == 'dev'", specifier = ">=2.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.24" },
     { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=5.0" },
