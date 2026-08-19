@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -27,6 +28,10 @@ class PluginLifecycle:
         self._pipeline: Any | None = None
         self._memory_service: Any | None = None
         self._cron: Any | None = None
+        self._learning_service: Any | None = None
+        self._migration_service: Any | None = None
+        self._migration_tasks: list[Any] = []
+        self._needs_migration = False
 
     async def on_load(self):
         try:
@@ -88,6 +93,20 @@ class PluginLifecycle:
 
             self._cron = MemoryCleanupCron(self._memory_service)
             self._cron.start()
+
+            from unified_chat.storage import kv as kv_store
+
+            snapshot = await kv_store.kv_get("embedding_provider_snapshot")
+            self._needs_migration = bool(
+                snapshot
+                and config.embedding_provider_id
+                and snapshot != config.embedding_provider_id
+            )
+            await kv_store.kv_set("embedding_provider_snapshot", config.embedding_provider_id)
+
+            from unified_chat.services.migration_service import MigrationService
+
+            self._migration_service = MigrationService(self.context, config)
         except Exception as e:  # pragma: no cover - defensive
             try:
                 from astrbot.api import logger  # type: ignore
@@ -161,9 +180,51 @@ class PluginLifecycle:
             )
         return self._status
 
+    async def get_status_async(self) -> str:
+        parts = [f"status={self._status}"]
+        if self._data_dir is not None:
+            parts.append(f"data_dir={self._data_dir}")
+        if self._config is not None:
+            parts.append(
+                f"rag_kbs={self._config.rag_kbs} agentic={self._config.rag_agentic} "
+                f"mem_days={self._config.memory_cleanup_days}"
+            )
+            parts.append(f"needs_migration={'yes' if self._needs_migration else 'no'}")
+        try:
+            from unified_chat.storage import repo as repos
+
+            memories = await repos.MemoryRepo.count()
+            messages = await repos.MessageRepo.count()
+            f_count = await repos.LearningLogRepo.count_by_stage("filter")
+            r_count = await repos.LearningLogRepo.count_by_stage("refine")
+            rf_count = await repos.LearningLogRepo.count_by_stage("reinforce")
+            parts.append(
+                f"memories={memories} messages={messages} "
+                f"learning(filter={f_count},refine={r_count},reinforce={rf_count})"
+            )
+        except Exception:
+            parts.append("counts=n/a")
+        return " | ".join(parts)
+
     async def migrate_kb(self, event: AstrMessageEvent, kb_name: str) -> str:
         if not kb_name:
             return "Usage: /unified_migrate <kb_name>"
-        # TODO: implement embedding dimension migration (spec 006)
-        _ = event
-        return f"Migration for '{kb_name}' not yet implemented (stub)."
+        if self._migration_service is None:
+            return "Plugin not initialized"
+        if await self._migration_service.is_running(kb_name):
+            return f"Migration for '{kb_name}' is already running."
+        task = asyncio.create_task(
+            self._migration_service.run_migration(kb_name),
+            name="unified_chat_migration",
+        )
+        task.add_done_callback(self._log_migration_done)
+        self._migration_tasks.append(task)
+        return f"Migration for '{kb_name}' started in background. Check /unified_status."
+
+    def _log_migration_done(self, task: asyncio.Task) -> None:
+        with contextlib.suppress(Exception):
+            exc = task.exception()
+            if exc is not None:
+                from astrbot.api import logger  # type: ignore
+
+                logger.error(f"[unified_chat] migration task failed: {exc}")

@@ -50,7 +50,10 @@ class UnifiedChatPlugin(Star):
     @filter.command("unified_status")
     async def unified_status(self, event: AstrMessageEvent):
         """Show plugin status."""
-        status = self._lifecycle.get_status() if self._initialized else "not initialized"
+        if not self._initialized:
+            yield event.plain_result("[UnifiedChat] not initialized")
+            return
+        status = await self._lifecycle.get_status_async()
         yield event.plain_result(f"[UnifiedChat] {status}")
 
     @filter.command("unified_migrate")
