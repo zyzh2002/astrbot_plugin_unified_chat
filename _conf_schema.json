@@ -1,67 +1,62 @@
 {
-  "title": "Unified Chat Config",
-  "type": "object",
-  "properties": {
-    "enable_conversation_enhance": {
-      "type": "boolean",
-      "description": "Enable conversation enhancement (context compression, social injection)",
-      "default": true
-    },
-    "enable_persistent_memory": {
-      "type": "boolean",
-      "description": "Enable persistent memory (30-day retention, importance scoring)",
-      "default": true
-    },
-    "enable_adaptive_learning": {
-      "type": "boolean",
-      "description": "Enable adaptive learning pipeline (filter -> refine -> reinforce)",
-      "default": true
-    },
-    "rag_agentic": {
-      "type": "boolean",
-      "description": "RAG agentic mode: inject KnowledgeBaseQueryTool for LLM to call autonomously",
-      "default": true
-    },
-    "rag_kbs": {
-      "type": "list",
-      "description": "Knowledge bases used for RAG (multi-select)",
-      "items": { "type": "string" },
-      "default": [],
-      "_special": "select_knowledgebase"
-    },
-    "chat_provider_id": {
-      "type": "string",
-      "description": "Chat completion provider for learning/refine steps",
-      "default": "",
-      "_special": "select_provider"
-    },
-    "embedding_provider_id": {
-      "type": "string",
-      "description": "Embedding provider for memory/RAG indexing",
-      "default": "",
-      "_special": "select_provider"
-    },
-    "rerank_provider_id": {
-      "type": "string",
-      "description": "Rerank provider (optional)",
-      "default": "",
-      "_special": "select_provider"
-    },
-    "memory_cleanup_days": {
-      "type": "integer",
-      "description": "Days to retain low-importance memories",
-      "default": 30
-    },
-    "importance_threshold": {
-      "type": "float",
-      "description": "Importance below which memories are eligible for cleanup",
-      "default": 0.3
-    },
-    "memory_kb_name": {
-      "type": "string",
-      "description": "KB name for memory vector indexing",
-      "default": "unified_chat_memories"
-    }
+  "enable_conversation_enhance": {
+    "description": "对话增强（上下文压缩、社交注入）",
+    "type": "bool",
+    "default": true
   },
-  "required": []
+  "enable_persistent_memory": {
+    "description": "持久记忆（30 天保留、重要度评分）",
+    "type": "bool",
+    "default": true
+  },
+  "enable_adaptive_learning": {
+    "description": "自适应学习流水线（filter -> refine -> reinforce）",
+    "type": "bool",
+    "default": true
+  },
+  "rag_agentic": {
+    "description": "RAG 自主调用模式（唯一模式，默认开启）",
+    "type": "bool",
+    "default": true
+  },
+  "rag_kbs": {
+    "description": "RAG 关联知识库（多选）",
+    "type": "list",
+    "items": { "type": "string" },
+    "default": [],
+    "_special": "select_knowledgebase"
+  },
+  "chat_provider_id": {
+    "description": "学习/提炼步骤使用的对话模型",
+    "type": "string",
+    "default": "",
+    "_special": "select_provider"
+  },
+  "embedding_provider_id": {
+    "description": "记忆/RAG 索引使用的嵌入模型",
+    "type": "string",
+    "default": "",
+    "_special": "select_provider"
+  },
+  "rerank_provider_id": {
+    "description": "重排序模型（可选）",
+    "type": "string",
+    "default": "",
+    "_special": "select_provider"
+  },
+  "memory_cleanup_days": {
+    "description": "低重要度记忆保留天数",
+    "type": "int",
+    "default": 30
+  },
+  "importance_threshold": {
+    "description": "低于该重要度的记忆可被清理",
+    "type": "float",
+    "default": 0.3
+  },
+  "memory_kb_name": {
+    "description": "记忆向量索引使用的知识库名称",
+    "type": "string",
+    "default": "unified_chat_memories"
+  }
 }
