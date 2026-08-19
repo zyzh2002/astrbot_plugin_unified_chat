@@ -40,6 +40,30 @@ class PluginConfig:
             return raw.get(key, default)
 
         d = DEFAULTS
+
+        # Handle rag_kbs coercion: must be list of strings
+        raw_kbs = pick("rag_kbs", d["rag_kbs"])
+        if isinstance(raw_kbs, list):
+            rag_kbs = [str(x) for x in raw_kbs if isinstance(x, (str, int, float))]
+        else:
+            rag_kbs = list(d["rag_kbs"])  # fallback to default
+
+        # Clamp memory_cleanup_days
+        try:
+            mcd = int(pick("memory_cleanup_days", d["memory_cleanup_days"]))
+        except (TypeError, ValueError):
+            mcd = int(d["memory_cleanup_days"])
+        if mcd < 1:
+            mcd = int(d["memory_cleanup_days"])
+
+        # Clamp importance_threshold into [0,1]
+        try:
+            thr = float(pick("importance_threshold", d["importance_threshold"]))
+        except (TypeError, ValueError):
+            thr = float(d["importance_threshold"])
+        if not 0.0 <= thr <= 1.0:
+            thr = float(d["importance_threshold"])
+
         return cls(
             enable_conversation_enhance=bool(
                 pick("enable_conversation_enhance", d["enable_conversation_enhance"])  # noqa: E501
@@ -51,12 +75,12 @@ class PluginConfig:
                 pick("enable_adaptive_learning", d["enable_adaptive_learning"])  # noqa: E501
             ),
             rag_agentic=bool(pick("rag_agentic", d["rag_agentic"])),
-            rag_kbs=list(pick("rag_kbs", d["rag_kbs"])),
+            rag_kbs=rag_kbs,
             chat_provider_id=str(pick("chat_provider_id", d["chat_provider_id"])),
             embedding_provider_id=str(pick("embedding_provider_id", d["embedding_provider_id"])),
             rerank_provider_id=str(pick("rerank_provider_id", d["rerank_provider_id"])),
-            memory_cleanup_days=int(pick("memory_cleanup_days", d["memory_cleanup_days"])),
-            importance_threshold=float(pick("importance_threshold", d["importance_threshold"])),
+            memory_cleanup_days=mcd,
+            importance_threshold=thr,
             data_dir=data_dir,
         )
 
