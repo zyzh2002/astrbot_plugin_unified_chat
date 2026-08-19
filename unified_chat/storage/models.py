@@ -35,6 +35,7 @@ class Memory(SQLModel, table=True):
     importance: float = Field(default=0.5, ge=0.0, le=1.0)
     source: str = Field(default="auto", max_length=64)
     dedup_hash: str = Field(default="", index=True, max_length=64)
+    kb_doc_id: str | None = Field(default=None, index=True, max_length=64)
     access_count: int = Field(default=0)
     created_at: datetime = Field(default_factory=_utcnow, index=True)
     last_accessed_at: datetime = Field(default_factory=_utcnow)

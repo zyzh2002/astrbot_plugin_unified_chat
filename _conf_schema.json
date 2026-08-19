@@ -56,6 +56,11 @@
       "type": "float",
       "description": "Importance below which memories are eligible for cleanup",
       "default": 0.3
+    },
+    "memory_kb_name": {
+      "type": "string",
+      "description": "KB name for memory vector indexing",
+      "default": "unified_chat_memories"
     }
   },
   "required": []
