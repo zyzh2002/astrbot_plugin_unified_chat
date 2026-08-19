@@ -32,9 +32,7 @@ class MessageRepo:
     async def exists_hash(h: str) -> bool:
         async with get_session() as session:
             result = await session.exec(
-                select(MessageRecord.id)
-                .where(MessageRecord.dedup_hash == h)
-                .limit(1)
+                select(MessageRecord.id).where(MessageRecord.dedup_hash == h).limit(1)
             )
             return result.first() is not None
 
@@ -125,9 +123,7 @@ class MemoryRepo:
     @staticmethod
     async def exists_hash(h: str) -> bool:
         async with get_session() as session:
-            result = await session.exec(
-                select(Memory.id).where(Memory.dedup_hash == h).limit(1)
-            )
+            result = await session.exec(select(Memory.id).where(Memory.dedup_hash == h).limit(1))
             return result.first() is not None
 
 

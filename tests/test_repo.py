@@ -62,9 +62,7 @@ async def test_exists_hash():
     with tempfile.TemporaryDirectory() as d:
         await get_engine(Path(d) / "r4.db")
         assert not await MessageRepo.exists_hash("h1")
-        await MessageRepo.add(
-            MessageRecord(umo="u", sender_id="s", content="c", dedup_hash="h1")
-        )
+        await MessageRepo.add(MessageRecord(umo="u", sender_id="s", content="c", dedup_hash="h1"))
         assert await MessageRepo.exists_hash("h1")
         assert not await MemoryRepo.exists_hash("h1")
         await MemoryRepo.add(Memory(content="c", dedup_hash="h2"))

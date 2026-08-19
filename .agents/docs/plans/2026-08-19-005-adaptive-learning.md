@@ -58,13 +58,12 @@ async def exists_hash(h: str) -> bool:
         )
         return result.first() is not None
 
+
 # MemoryRepo
 @staticmethod
 async def exists_hash(h: str) -> bool:
     async with get_session() as session:
-        result = await session.exec(
-            select(Memory.id).where(Memory.dedup_hash == h).limit(1)
-        )
+        result = await session.exec(select(Memory.id).where(Memory.dedup_hash == h).limit(1))
         return result.first() is not None
 ```
 
@@ -100,26 +99,35 @@ from unified_chat.config import PluginConfig
 from unified_chat.services.learning_service import LearningService
 from unified_chat.storage.database import close_engine, get_engine, reset_engine_for_tests
 
+
 class FakeEvent:
     def __init__(self, text, umo="p:m:1", sender="alice"):
         self.message_str = text
         self.unified_msg_origin = umo
         self._sender = sender
-    def get_sender_name(self): return self._sender
-    def is_private_chat(self): return False
+
+    def get_sender_name(self):
+        return self._sender
+
+    def is_private_chat(self):
+        return False
+
 
 class FakeResp:
     completion_text = "  durable fact about alice  "
+
 
 class FakeContext:
     def __init__(self, provider_id=None):
         self.calls = []
         self._provider_id = provider_id
+
     async def llm_generate(self, **kw):
         self.calls.append(kw)
         if self._provider_id is None:
             raise ValueError("no provider")
         return FakeResp()
+
 
 @pytest.fixture
 def ctx_db(tmp_path):
@@ -127,14 +135,17 @@ def ctx_db(tmp_path):
     yield tmp_path
     asyncio.get_event_loop_policy()  # keep simple
 
+
 async def _init_db(p):
     await get_engine(pathlib.Path(p) / "l.db")
+
 
 def test_should_learn_gates():
     svc = LearningService(FakeContext(), PluginConfig())
     assert not svc.should_learn(FakeEvent("/cmd"))
     assert not svc.should_learn(FakeEvent("short"))
     assert svc.should_learn(FakeEvent("this is long enough"))
+
 
 @pytest.mark.asyncio
 async def test_refine_calls_llm(tmp_path):
@@ -147,6 +158,7 @@ async def test_refine_calls_llm(tmp_path):
     assert ctx.calls[0]["prompt"] == "hello world message"
     assert ctx.calls[0]["chat_provider_id"] == "p1"
 
+
 @pytest.mark.asyncio
 async def test_refine_missing_provider(tmp_path):
     reset_engine_for_tests()
@@ -154,11 +166,13 @@ async def test_refine_missing_provider(tmp_path):
     svc = LearningService(FakeContext(), PluginConfig(chat_provider_id="p1"))
     assert await svc.refine("hello") == ""
 
+
 @pytest.mark.asyncio
 async def test_maybe_learn_degrade_mode(tmp_path):
     reset_engine_for_tests()
     await _init_db(tmp_path)
     from unified_chat.storage.repo import MemoryRepo, MessageRepo
+
     svc = LearningService(FakeContext(), PluginConfig(chat_provider_id=""))
     text = "raw message long enough"
     await svc.maybe_learn(FakeEvent(text), "alice")
@@ -168,11 +182,13 @@ async def test_maybe_learn_degrade_mode(tmp_path):
     await svc.maybe_learn(FakeEvent(text), "alice")
     assert await MessageRepo.count() == 1
 
+
 @pytest.mark.asyncio
 async def test_maybe_learn_full_pipeline(tmp_path):
     reset_engine_for_tests()
     await _init_db(tmp_path)
     from unified_chat.storage.repo import MemoryRepo, MessageRepo
+
     svc = LearningService(FakeContext(provider_id="p1"), PluginConfig(chat_provider_id="p1"))
     await svc.maybe_learn(FakeEvent("hello world long message"), "alice")
     mems = await MemoryRepo.list_all()
@@ -184,11 +200,13 @@ async def test_maybe_learn_full_pipeline(tmp_path):
     await svc.maybe_learn(FakeEvent("hello world long message"), "alice")
     assert len(await MemoryRepo.list_all()) == 1
 
+
 @pytest.mark.asyncio
 async def test_refine_failure_keeps_pipeline(tmp_path):
     reset_engine_for_tests()
     await _init_db(tmp_path)
     from unified_chat.storage.repo import MemoryRepo, MessageRepo
+
     svc = LearningService(FakeContext(), PluginConfig(chat_provider_id="p1"))
     await svc.maybe_learn(FakeEvent("hello world long message"), "alice")
     assert await MemoryRepo.list_all() == []
@@ -278,7 +296,9 @@ class LearningService:
                 return
             await repos.LearningLogRepo.add(
                 LearningLog(
-                    stage="refine", input_text=text, output_text=refined,
+                    stage="refine",
+                    input_text=text,
+                    output_text=refined,
                     provider_id=self.config.chat_provider_id,
                 )
             )
@@ -300,6 +320,7 @@ class LearningService:
     def _log_error(msg: str) -> None:
         with contextlib.suppress(Exception):
             from astrbot.api import logger
+
             logger.error(f"[unified_chat] learning {msg}", exc_info=True)
 ```
 
@@ -334,15 +355,26 @@ from unittest.mock import patch
 from unified_chat.core.lifecycle import PluginLifecycle
 from unified_chat.storage.database import close_engine, reset_engine_for_tests
 
+
 class FakeContext:
-    def __init__(self, cfg=None): self._cfg = cfg or {}
-    def get_config(self): return self._cfg
+    def __init__(self, cfg=None):
+        self._cfg = cfg or {}
+
+    def get_config(self):
+        return self._cfg
+
 
 class FakeEvent:
     def __init__(self, text, umo="p:m:1"):
-        self.message_str = text; self.unified_msg_origin = umo
-    def get_sender_name(self): return "alice"
-    def is_private_chat(self): return False
+        self.message_str = text
+        self.unified_msg_origin = umo
+
+    def get_sender_name(self):
+        return "alice"
+
+    def is_private_chat(self):
+        return False
+
 
 @pytest.mark.asyncio
 async def test_handle_message_learns_in_background(tmp_path):
@@ -353,6 +385,7 @@ async def test_handle_message_learns_in_background(tmp_path):
         await lc.handle_message(FakeEvent("hello world learning message"))
         await asyncio.sleep(0.1)
         from unified_chat.storage.repo import MessageRepo
+
         assert await MessageRepo.count() == 1
         await lc.on_unload()
         await close_engine()
@@ -370,8 +403,11 @@ if self.learning_service is not None:
 
 # lifecycle.py on_load after memory service:
 from unified_chat.services.learning_service import LearningService
+
 self._learning_service = LearningService(self.context, config)
-self._pipeline = MessagePipeline(config, self._chat_service, self._memory_service, self._learning_service)
+self._pipeline = MessagePipeline(
+    config, self._chat_service, self._memory_service, self._learning_service
+)
 ```
 
 - [ ] **Step 4: Verify + LSP + ruff + full pytest**
