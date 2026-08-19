@@ -33,13 +33,16 @@
 # tests/test_config_validation.py add
 def test_memory_kb_name_default_and_override():
     from unified_chat.config import PluginConfig
+
     assert PluginConfig().memory_kb_name == "unified_chat_memories"
     c = PluginConfig.from_dict({"memory_kb_name": "my_mem"})
     assert c.memory_kb_name == "my_mem"
 
+
 # tests/test_storage_models.py add
 def test_memory_has_kb_doc_id():
     from unified_chat.storage.models import Memory
+
     m = Memory(content="x", kb_doc_id="doc1")
     assert m.kb_doc_id == "doc1"
 ```
@@ -89,8 +92,9 @@ git commit -m "feat(memory): add memory_kb_name config and Memory.kb_doc_id colu
 async def test_memory_repo_search_and_expired():
     reset_engine_for_tests()
     from datetime import UTC, datetime, timedelta
+
     with tempfile.TemporaryDirectory() as d:
-        await get_engine(Path(d)/"r2.db")
+        await get_engine(Path(d) / "r2.db")
         await MemoryRepo.add(Memory(content="apple pie recipe", importance=0.9))
         await MemoryRepo.add(Memory(content="banana bread", importance=0.1))
         await MemoryRepo.add(Memory(content="carrot cake", importance=0.2))
@@ -114,12 +118,17 @@ async def test_memory_repo_search_and_expired():
 ```python
 class MemoryRepo:
     ...
+
     @staticmethod
     async def list_expired(threshold: float, cutoff: datetime) -> list[Memory]:
         async with get_session() as session:
-            rows = (await session.exec(
-                select(Memory).where(Memory.importance < threshold).where(Memory.created_at < cutoff)
-            )).all()
+            rows = (
+                await session.exec(
+                    select(Memory)
+                    .where(Memory.importance < threshold)
+                    .where(Memory.created_at < cutoff)
+                )
+            ).all()
             return list(rows)
 
     @staticmethod
@@ -137,10 +146,14 @@ class MemoryRepo:
     async def search_by_keyword(keyword: str, limit: int = 5) -> list[Memory]:
         escaped = keyword.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
         async with get_session() as session:
-            rows = (await session.exec(
-                select(Memory).where(Memory.content.like(f"%{escaped}%", escape="\\"))
-                .order_by(Memory.importance.desc()).limit(limit)
-            )).all()
+            rows = (
+                await session.exec(
+                    select(Memory)
+                    .where(Memory.content.like(f"%{escaped}%", escape="\\"))
+                    .order_by(Memory.importance.desc())
+                    .limit(limit)
+                )
+            ).all()
             return list(rows)
 
     @staticmethod
@@ -189,35 +202,67 @@ from unified_chat.config import PluginConfig
 from unified_chat.services.memory_service import MemoryService
 from unified_chat.services.chat_service import ChatService
 
+
 class FakeEvent:
     def __init__(self, text, umo="p:m:1", sender="alice"):
-        self.message_str = text; self.unified_msg_origin = umo; self._sender = sender
-    def get_sender_name(self): return self._sender
-    def is_private_chat(self): return False
+        self.message_str = text
+        self.unified_msg_origin = umo
+        self._sender = sender
+
+    def get_sender_name(self):
+        return self._sender
+
+    def is_private_chat(self):
+        return False
+
 
 class FakeDoc:
     doc_id = "doc9"
 
+
 class FakeKbHelper:
-    def __init__(self): self.uploads=[]; self.deletes=[]
-    async def upload_document(self, file_name, file_content, file_type, pre_chunked_text=None, **kw):
-        self.uploads.append((file_name, pre_chunked_text)); return FakeDoc()
-    async def delete_document(self, doc_id): self.deletes.append(doc_id)
+    def __init__(self):
+        self.uploads = []
+        self.deletes = []
+
+    async def upload_document(
+        self, file_name, file_content, file_type, pre_chunked_text=None, **kw
+    ):
+        self.uploads.append((file_name, pre_chunked_text))
+        return FakeDoc()
+
+    async def delete_document(self, doc_id):
+        self.deletes.append(doc_id)
+
 
 class FakeKbManager:
-    def __init__(self, helper): self.helper = helper; self.created=[]; self.retrieves=[]
-    async def get_kb_by_name(self, name): return self.helper if self.helper else None
-    async def create_kb(self, kb_name, **kw): self.created.append(kb_name); return self.helper
+    def __init__(self, helper):
+        self.helper = helper
+        self.created = []
+        self.retrieves = []
+
+    async def get_kb_by_name(self, name):
+        return self.helper if self.helper else None
+
+    async def create_kb(self, kb_name, **kw):
+        self.created.append(kb_name)
+        return self.helper
+
     async def retrieve(self, query, kb_names, **kw):
-        self.retrieves.append((query, kb_names)); return {"context_text": "MEM"}
+        self.retrieves.append((query, kb_names))
+        return {"context_text": "MEM"}
+
 
 class FakeContext:
-    def __init__(self, kb_manager): self.kb_manager = kb_manager
+    def __init__(self, kb_manager):
+        self.kb_manager = kb_manager
+
 
 def test_compute_importance_bounds():
     svc = MemoryService(FakeContext(None), PluginConfig())
     v = svc.compute_importance("hello world", "alice", [])
     assert 0.0 <= v <= 1.0
+
 
 def test_should_store_gates():
     svc = MemoryService(FakeContext(None), PluginConfig())
@@ -238,6 +283,7 @@ from unified_chat.native import score_importance
 from unified_chat.services.chat_service import ChatService
 from unified_chat.storage import repo as repos
 from unified_chat.storage.models import Memory
+
 
 class MemoryService:
     MIN_MEMORY_CHARS = 20
@@ -296,17 +342,25 @@ class MemoryService:
             if not self.should_store(event):
                 return
             text = event.message_str
-            existing = await repos.MemoryRepo.list_all()  # 004: global memories, keep bounded via LIMIT later
+            existing = (
+                await repos.MemoryRepo.list_all()
+            )  # 004: global memories, keep bounded via LIMIT later
             importance = self.compute_importance(text, sender_id, existing)
-            mem = await repos.MemoryRepo.add(Memory(
-                content=text, importance=importance, source=sender_id,
-                dedup_hash=ChatService.hash_of(text),
-            ))
+            mem = await repos.MemoryRepo.add(
+                Memory(
+                    content=text,
+                    importance=importance,
+                    source=sender_id,
+                    dedup_hash=ChatService.hash_of(text),
+                )
+            )
             if importance >= self.config.importance_threshold and self._kb_helper is not None:
                 with contextlib.suppress(Exception):
                     doc = await self._kb_helper.upload_document(
-                        file_name=f"memory_{mem.id}.txt", file_content=None,
-                        file_type="txt", pre_chunked_text=[text],
+                        file_name=f"memory_{mem.id}.txt",
+                        file_content=None,
+                        file_type="txt",
+                        pre_chunked_text=[text],
                     )
                     await repos.MemoryRepo.update_kb_doc_id(mem.id, doc.doc_id)
         except Exception:
@@ -317,8 +371,10 @@ class MemoryService:
         if self._kb_helper is not None and kb_manager is not None:
             with contextlib.suppress(Exception):
                 result = await kb_manager.retrieve(
-                    query=query, kb_names=[self.config.memory_kb_name],
-                    top_k_fusion=20, top_m_final=5,
+                    query=query,
+                    kb_names=[self.config.memory_kb_name],
+                    top_k_fusion=20,
+                    top_m_final=5,
                 )
                 if result and isinstance(result, dict) and result.get("context_text"):
                     return str(result["context_text"])
@@ -341,6 +397,7 @@ class MemoryService:
     def _log_error(msg: str) -> None:
         with contextlib.suppress(Exception):
             from astrbot.api import logger
+
             logger.error(f"[unified_chat] memory {msg}", exc_info=True)
 ```
 
@@ -372,18 +429,25 @@ import pytest
 from datetime import datetime
 from unified_chat.core.cron import MemoryCleanupCron
 
+
 class FakeMemoryService:
-    def __init__(self): self.ticks = 0
-    async def delete_expired_memories(self): self.ticks += 1; return 3
+    def __init__(self):
+        self.ticks = 0
+
+    async def delete_expired_memories(self):
+        self.ticks += 1
+        return 3
+
 
 def test_seconds_until_next_03():
     cron = MemoryCleanupCron(FakeMemoryService())
     # 04:00 -> next 03:00 is 23 hours later
-    assert abs(cron._seconds_until_next_03(datetime(2026, 8, 20, 4, 0, 0)) - 23*3600) < 1
+    assert abs(cron._seconds_until_next_03(datetime(2026, 8, 20, 4, 0, 0)) - 23 * 3600) < 1
     # 01:00 -> 2 hours later
-    assert abs(cron._seconds_until_next_03(datetime(2026, 8, 20, 1, 0, 0)) - 2*3600) < 1
+    assert abs(cron._seconds_until_next_03(datetime(2026, 8, 20, 1, 0, 0)) - 2 * 3600) < 1
     # exactly 03:00 -> next day
-    assert abs(cron._seconds_until_next_03(datetime(2026, 8, 20, 3, 0, 0)) - 24*3600) < 1
+    assert abs(cron._seconds_until_next_03(datetime(2026, 8, 20, 3, 0, 0)) - 24 * 3600) < 1
+
 
 @pytest.mark.asyncio
 async def test_tick_delegates():
@@ -392,9 +456,11 @@ async def test_tick_delegates():
     assert await cron._tick() == 3
     assert svc.ticks == 1
 
+
 @pytest.mark.asyncio
 async def test_stop_idempotent_and_cancels():
     import asyncio
+
     svc = FakeMemoryService()
     cron = MemoryCleanupCron(svc)
     cron.start()
@@ -410,6 +476,7 @@ async def test_stop_idempotent_and_cancels():
 ```python
 import asyncio, contextlib
 from datetime import datetime, timedelta
+
 
 class MemoryCleanupCron:
     def __init__(self, memory_service):
@@ -454,6 +521,7 @@ class MemoryCleanupCron:
     def _log_error(msg: str) -> None:
         with contextlib.suppress(Exception):
             from astrbot.api import logger
+
             logger.error(f"[unified_chat] cron {msg}", exc_info=True)
 ```
 
@@ -483,14 +551,11 @@ git commit -m "feat(memory): add daily 03:00 cleanup cron"
 ```python
 # tests/test_hooks_memory.py
 @pytest.mark.asyncio
-async def test_inject_memories_gate_off():
-    ...  # enable_persistent_memory=False -> req.contexts untouched
+async def test_inject_memories_gate_off(): ...  # enable_persistent_memory=False -> req.contexts untouched
 @pytest.mark.asyncio
-async def test_inject_memories_kb_mode():
-    ...  # memory_service.retrieve mocked -> system message appended
+async def test_inject_memories_kb_mode(): ...  # memory_service.retrieve mocked -> system message appended
 @pytest.mark.asyncio
-async def test_inject_memories_empty():
-    ...  # retrieve returns "" -> no append
+async def test_inject_memories_empty(): ...  # retrieve returns "" -> no append
 ```
 
 ```python
@@ -526,20 +591,26 @@ async def inject_memories(event, req, config, memory_service) -> None:
     except Exception:
         with contextlib.suppress(Exception):
             from astrbot.api import logger
+
             logger.error("[unified_chat] inject_memories failed", exc_info=True)
+
 
 # pipeline.py: constructor gains memory_service=None; _after_stages:
 async def _after_stages(self, event) -> None:
     if self.memory_service is not None:
         await self.memory_service.maybe_store(event, self._sender_of(event))
+
+
 # _sender_of: get_sender_name guarded
 
 # lifecycle.py on_load (inside try, after pipeline creation):
 from unified_chat.services.memory_service import MemoryService
+
 self._memory_service = MemoryService(self.context, config)
 await self._memory_service.ensure_memory_kb()
 self._pipeline = MessagePipeline(config, self._chat_service, self._memory_service)
 from unified_chat.core.cron import MemoryCleanupCron
+
 self._cron = MemoryCleanupCron(self._memory_service)
 self._cron.start()
 

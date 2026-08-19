@@ -88,9 +88,7 @@ class MemoryRepo:
 
     @staticmethod
     async def search_by_keyword(keyword: str, limit: int = 5) -> list[Memory]:
-        escaped = (
-            keyword.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-        )
+        escaped = keyword.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
         async with get_session() as session:
             rows = (
                 await session.exec(

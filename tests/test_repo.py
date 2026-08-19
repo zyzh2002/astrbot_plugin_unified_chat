@@ -16,9 +16,7 @@ async def test_message_repo_add_count():
     reset_engine_for_tests()
     with tempfile.TemporaryDirectory() as d:
         await get_engine(Path(d) / "r.db")
-        await MessageRepo.add(
-            MessageRecord(umo="u", sender_id="s", content="hi", dedup_hash="h")
-        )
+        await MessageRepo.add(MessageRecord(umo="u", sender_id="s", content="hi", dedup_hash="h"))
         assert await MessageRepo.count() == 1
         await close_engine()
 
@@ -36,9 +34,7 @@ async def test_memory_repo_search_and_expired():
         assert [m.content for m in hits] == ["apple pie recipe"]
         await MemoryRepo.add(Memory(content="100% sure", importance=0.5))
         assert len(await MemoryRepo.search_by_keyword("100% sure", limit=5)) == 1
-        expired = await MemoryRepo.list_expired(
-            0.5, datetime.now(UTC) - timedelta(days=30)
-        )
+        expired = await MemoryRepo.list_expired(0.5, datetime.now(UTC) - timedelta(days=30))
         assert [m.content for m in expired] == ["banana bread", "carrot cake"]
         ids = [m.id for m in expired if m.id is not None]
         assert await MemoryRepo.delete_by_ids(ids) == 2

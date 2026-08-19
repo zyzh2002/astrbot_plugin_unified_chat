@@ -32,9 +32,7 @@ class FakeEvent:
 @pytest.mark.asyncio
 async def test_handle_message_records_via_pipeline(tmp_path):
     reset_engine_for_tests()
-    with patch(
-        "unified_chat.utils.path.resolve_data_dir", lambda raw, ctx: tmp_path / "data"
-    ):
+    with patch("unified_chat.utils.path.resolve_data_dir", lambda raw, ctx: tmp_path / "data"):
         lc = PluginLifecycle(None, FakeContext())
         await lc.on_load()
         await lc.handle_message(FakeEvent("hello"))
@@ -46,9 +44,7 @@ async def test_handle_message_records_via_pipeline(tmp_path):
 @pytest.mark.asyncio
 async def test_handle_message_skips_command(tmp_path):
     reset_engine_for_tests()
-    with patch(
-        "unified_chat.utils.path.resolve_data_dir", lambda raw, ctx: tmp_path / "data"
-    ):
+    with patch("unified_chat.utils.path.resolve_data_dir", lambda raw, ctx: tmp_path / "data"):
         lc = PluginLifecycle(None, FakeContext())
         await lc.on_load()
         await lc.handle_message(FakeEvent("/cmd"))
@@ -60,9 +56,7 @@ async def test_handle_message_skips_command(tmp_path):
 @pytest.mark.asyncio
 async def test_handle_llm_request_injects_social(tmp_path):
     reset_engine_for_tests()
-    with patch(
-        "unified_chat.utils.path.resolve_data_dir", lambda raw, ctx: tmp_path / "data"
-    ):
+    with patch("unified_chat.utils.path.resolve_data_dir", lambda raw, ctx: tmp_path / "data"):
         lc = PluginLifecycle(None, FakeContext())
         await lc.on_load()
         ev = FakeEvent("hello")

@@ -47,9 +47,7 @@ class MemoryService:
             self._kb_helper = None
             self._log_error("ensure_memory_kb")
 
-    def compute_importance(
-        self, content: str, sender_id: str, existing: list[Memory]
-    ) -> float:
+    def compute_importance(self, content: str, sender_id: str, existing: list[Memory]) -> float:
         now = datetime.now(UTC)
         freq = 0
         newest: datetime | None = None
@@ -58,9 +56,7 @@ class MemoryService:
                 freq += 1
                 if newest is None or m.created_at > newest:
                     newest = m.created_at
-        recency_hours = (
-            0.0 if newest is None else max(0.0, (now - newest).total_seconds() / 3600.0)
-        )
+        recency_hours = 0.0 if newest is None else max(0.0, (now - newest).total_seconds() / 3600.0)
         return score_importance(len(content), recency_hours, freq)
 
     def should_store(self, event: Any) -> bool:
@@ -119,16 +115,12 @@ class MemoryService:
 
     async def delete_expired_memories(self) -> int:
         cutoff = datetime.now(UTC) - timedelta(days=self.config.memory_cleanup_days)
-        expired = await repos.MemoryRepo.list_expired(
-            self.config.importance_threshold, cutoff
-        )
+        expired = await repos.MemoryRepo.list_expired(self.config.importance_threshold, cutoff)
         for m in expired:
             if m.kb_doc_id and self._kb_helper is not None:
                 with contextlib.suppress(Exception):
                     await self._kb_helper.delete_document(m.kb_doc_id)
-        return await repos.MemoryRepo.delete_by_ids(
-            [m.id for m in expired if m.id is not None]
-        )
+        return await repos.MemoryRepo.delete_by_ids([m.id for m in expired if m.id is not None])
 
     @staticmethod
     def _log_error(msg: str) -> None:

@@ -29,9 +29,7 @@ class MemoryCleanupCron:
         if now.hour < 3:
             nxt = now.replace(hour=3, minute=0, second=0, microsecond=0)
         else:
-            nxt = (now + timedelta(days=1)).replace(
-                hour=3, minute=0, second=0, microsecond=0
-            )
+            nxt = (now + timedelta(days=1)).replace(hour=3, minute=0, second=0, microsecond=0)
         return (nxt - now).total_seconds()
 
     async def _run(self) -> None:
