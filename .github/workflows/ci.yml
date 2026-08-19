@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v5
+      - name: Install deps
+        run: uv sync
+      - name: Lint
+        run: uv run ruff check .
+      - name: Python tests
+        run: uv run pytest -q
+      - name: Rust tests
+        run: cargo test -p unified_chat_native
+      - name: Build manylinux wheel
+        run: uv run maturin build --release --strip --manylinux 2_28
+      - name: Upload wheel
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheel
+          path: target/wheels/*.whl
