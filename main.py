@@ -8,7 +8,12 @@ import contextlib
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.star import Context, Star
 
-from unified_chat.core.lifecycle import PluginLifecycle
+try:
+    # Inside AstrBot the plugin is imported as data.plugins.<name> and the
+    # plugin directory is NOT on sys.path; use package-relative imports.
+    from .unified_chat.core.lifecycle import PluginLifecycle
+except ImportError:  # pragma: no cover - local dev (module imported as top-level)
+    from unified_chat.core.lifecycle import PluginLifecycle  # type: ignore
 
 
 class UnifiedChatPlugin(Star):

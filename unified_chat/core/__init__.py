@@ -1,5 +1,5 @@
 """Core package."""
 
-from unified_chat.core.lifecycle import PluginLifecycle
+from .lifecycle import PluginLifecycle
 
 __all__ = ["PluginLifecycle"]

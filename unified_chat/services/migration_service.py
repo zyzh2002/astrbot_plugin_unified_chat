@@ -6,9 +6,9 @@ import asyncio
 import contextlib
 from typing import Any
 
-from unified_chat.storage import kv as kv_store
-from unified_chat.storage import repo as repos
-from unified_chat.storage.models import LearningLog
+from ..storage import kv as kv_store
+from ..storage import repo as repos
+from ..storage.models import LearningLog
 
 
 class MigrationService:

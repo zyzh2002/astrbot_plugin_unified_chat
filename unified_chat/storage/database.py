@@ -12,11 +12,21 @@ from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async
 from sqlmodel import SQLModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from unified_chat.storage.models import (  # noqa: F401 ensure tables
+from .models import (  # noqa: F401 ensure tables
     LearningLog,
     Memory,
     MessageRecord,
     UnifiedKV,
+)
+
+# SQLModel shares a global metadata registry with AstrBot itself; restrict
+# table creation to our own tables so AstrBot's models never leak into the
+# plugin database.
+_PLUGIN_TABLES = (
+    MessageRecord.__table__,
+    Memory.__table__,
+    LearningLog.__table__,
+    UnifiedKV.__table__,
 )
 
 _engine: AsyncEngine | None = None
@@ -45,7 +55,11 @@ async def get_engine(db_path: str | Path) -> AsyncEngine:
             cursor.close()
 
         async with engine.begin() as conn:
-            await conn.run_sync(SQLModel.metadata.create_all)
+            await conn.run_sync(
+                lambda sync_conn: SQLModel.metadata.create_all(
+                    sync_conn, tables=list(_PLUGIN_TABLES)
+                )
+            )
         _engine = engine
         return engine
 

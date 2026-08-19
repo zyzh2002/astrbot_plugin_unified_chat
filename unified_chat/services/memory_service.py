@@ -6,10 +6,10 @@ import contextlib
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from unified_chat.native import score_importance
-from unified_chat.services.chat_service import ChatService
-from unified_chat.storage import repo as repos
-from unified_chat.storage.models import Memory
+from ..native import score_importance
+from ..storage import repo as repos
+from ..storage.models import Memory
+from .chat_service import ChatService
 
 
 class MemoryService:

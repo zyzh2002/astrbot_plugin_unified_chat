@@ -7,8 +7,8 @@ from datetime import datetime
 from sqlalchemy import func
 from sqlmodel import select
 
-from unified_chat.storage.database import get_session
-from unified_chat.storage.models import LearningLog, Memory, MessageRecord
+from .database import get_session
+from .models import LearningLog, Memory, MessageRecord
 
 
 class MessageRepo:

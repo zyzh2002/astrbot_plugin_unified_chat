@@ -6,10 +6,10 @@ import asyncio
 import contextlib
 from typing import Any
 
-from unified_chat.services.chat_service import ChatService
-from unified_chat.storage import repo as repos
-from unified_chat.storage.models import LearningLog, Memory, MessageRecord
-from unified_chat.utils.hashing import dedup_hash
+from ..storage import repo as repos
+from ..storage.models import LearningLog, Memory, MessageRecord
+from ..utils.hashing import dedup_hash
+from .chat_service import ChatService
 
 REFINE_SYSTEM_PROMPT = (
     "Distill the following chat message into ONE concise, durable fact or "

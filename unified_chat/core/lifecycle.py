@@ -11,7 +11,7 @@ if TYPE_CHECKING:
     from astrbot.api.event import AstrMessageEvent
     from astrbot.api.star import Context, Star
 
-from unified_chat.config import PluginConfig
+from ..config import PluginConfig
 
 
 class PluginLifecycle:
@@ -54,34 +54,34 @@ class PluginLifecycle:
             if not isinstance(raw, dict):
                 raw = {}
 
-            from unified_chat.utils.path import resolve_data_dir
+            from ..utils.path import resolve_data_dir
 
             data_dir = resolve_data_dir(raw, self.context)
             config = PluginConfig.from_dict(raw, data_dir=str(data_dir))
             self._config = config
             self._data_dir = data_dir
 
-            from unified_chat.storage.database import get_engine
+            from ..storage.database import get_engine
 
             db_path = data_dir / "unified_chat.db"
             await get_engine(db_path)
             self._status = "loaded"
 
-            from unified_chat.services.rag_service import RagService
+            from ..services.rag_service import RagService
 
             self._rag_service = RagService(self.context)
 
-            from unified_chat.core.pipeline import MessagePipeline
-            from unified_chat.services.chat_service import ChatService
+            from ..services.chat_service import ChatService
+            from .pipeline import MessagePipeline
 
             self._chat_service = ChatService()
 
-            from unified_chat.services.memory_service import MemoryService
+            from ..services.memory_service import MemoryService
 
             self._memory_service = MemoryService(self.context, config)
             await self._memory_service.ensure_memory_kb()
 
-            from unified_chat.services.learning_service import LearningService
+            from ..services.learning_service import LearningService
 
             self._learning_service = LearningService(self.context, config)
 
@@ -89,12 +89,12 @@ class PluginLifecycle:
                 config, self._chat_service, self._memory_service, self._learning_service
             )
 
-            from unified_chat.core.cron import MemoryCleanupCron
+            from .cron import MemoryCleanupCron
 
             self._cron = MemoryCleanupCron(self._memory_service)
             self._cron.start()
 
-            from unified_chat.storage import kv as kv_store
+            from ..storage import kv as kv_store
 
             snapshot = await kv_store.kv_get("embedding_provider_snapshot")
             self._needs_migration = bool(
@@ -104,7 +104,7 @@ class PluginLifecycle:
             )
             await kv_store.kv_set("embedding_provider_snapshot", config.embedding_provider_id)
 
-            from unified_chat.services.migration_service import MigrationService
+            from ..services.migration_service import MigrationService
 
             self._migration_service = MigrationService(self.context, config)
         except Exception as e:  # pragma: no cover - defensive
@@ -121,7 +121,7 @@ class PluginLifecycle:
             if self._cron is not None:
                 self._cron.stop()
         with contextlib.suppress(Exception):
-            from unified_chat.storage.database import close_engine
+            from ..storage.database import close_engine
 
             await close_engine()
         self._status = "unloaded"
@@ -142,7 +142,7 @@ class PluginLifecycle:
             return
         if self._rag_service is not None:
             try:
-                from unified_chat.core.hooks import inject_kb_tool
+                from .hooks import inject_kb_tool
 
                 await inject_kb_tool(event, req, self._config, self._rag_service)
             except Exception:
@@ -152,7 +152,7 @@ class PluginLifecycle:
                     logger.error("[unified_chat] handle_llm_request failed", exc_info=True)
         if self._chat_service is not None:
             try:
-                from unified_chat.core.hooks import inject_social_context
+                from .hooks import inject_social_context
 
                 await inject_social_context(event, req, self._config, self._chat_service)
             except Exception:
@@ -162,7 +162,7 @@ class PluginLifecycle:
                     logger.error("[unified_chat] inject_social_context failed", exc_info=True)
         if self._memory_service is not None:
             try:
-                from unified_chat.core.hooks import inject_memories
+                from .hooks import inject_memories
 
                 await inject_memories(event, req, self._config, self._memory_service)
             except Exception:
@@ -191,7 +191,7 @@ class PluginLifecycle:
             )
             parts.append(f"needs_migration={'yes' if self._needs_migration else 'no'}")
         try:
-            from unified_chat.storage import repo as repos
+            from ..storage import repo as repos
 
             memories = await repos.MemoryRepo.count()
             messages = await repos.MessageRepo.count()

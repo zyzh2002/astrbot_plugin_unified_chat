@@ -72,11 +72,21 @@ Rules:
 
 - **Baseline:** AstrBot `>=4.27.3,<5.0.0`. Verify against `astrbot/core/star/star_manager.py` and `astrbot/core/star/context.py`.
 - **Plugin entry:** `metadata.yaml` + `main.py` (`Star` subclass) is the only discovery path. Do not use legacy `@register` metadata; `metadata.yaml` is authoritative.
-- **Storage:** Persistent data MUST go under `data/plugin_data/<plugin_name>/` via `StarTools.get_data_dir()` or `get_astrbot_data_path()`. Never write to the plugin source directory; it is wiped on update.
-- **Config:** `_conf_schema.json` is the single source for WebUI config. Use `_special: select_provider` / `select_knowledgebase` for provider/KB selection. Parsed config lands at `data/config/<plugin>_config.json`.
+- **Imports MUST be package-relative:** AstrBot imports plugins as `data.plugins.<name>.main` and does NOT add the plugin directory to `sys.path`. Absolute `from unified_chat...` imports fail at load. Use relative imports (`from ..storage...`, `from .hooks...`) everywhere inside `unified_chat/`; `main.py` uses try-relative/except-absolute for local dev. Hot-reload only purges `data.plugins.<name>.*` modules, so absolute top-level packages would leak stale code across reloads.
+- **Config schema is FLAT:** `_conf_schema.json` must be `{key: {type, description, default, hint, _special}}` — NOT JSON-Schema `{"type":"object","properties":{...}}` wrapped. `AstrBotConfig._config_schema_to_default_config` iterates top-level items. Valid types: `int float bool string text list file object template_list dict` (NOT `integer`/`boolean`). `_special: select_provider` / `select_knowledgebase` are flat per-key.
+- **Storage:** Persistent data MUST go under `data/plugin_data/<plugin_name>/` via `StarTools.get_data_dir()` or `get_astrbot_data_path()`. Never write to the plugin source directory; it is wiped on update. In AstrBot runtime `StarTools.get_data_dir()` already resolves to `data/plugin_data/<plugin_name>/`.
+- **SQLModel metadata is shared with AstrBot:** `SQLModel.metadata` is a global registry — `create_all` without `tables=` would create AstrBot's own tables inside the plugin DB. Always pass `tables=[MessageRecord.__table__, Memory.__table__, LearningLog.__table__, UnifiedKV.__table__]`.
+- **AstrBot import graph is order-sensitive:** deep submodule imports (e.g. `astrbot.core.knowledge_base.kb_helper`) fail with a circular import unless `astrbot.api` is imported first. E2E test modules must `pytest.importorskip("astrbot.api")` before other astrbot imports.
+- **Config:** Parsed config lands at `data/config/<plugin>_config.json`.
 - **RAG:** Use built-in `Context.kb_manager` (`KnowledgeBaseManager`) and `EmbeddingProvider`/`RerankProvider`. Do not vendor a separate vector DB. Agentic mode injects `KnowledgeBaseQueryTool`.
 - **Rust:** `pyproject.toml [tool.maturin] module-name = "unified_chat._native"` `bindings = "pyo3"`. Aggressive release profile (`lto="fat"`, `codegen-units=1`, `strip=true`, `target-cpu=x86-64-v3` for manylinux_2_28). All Rust exports must have a Python fallback in `unified_chat/native/fallback.py`.
 - **Isolation:** No global singletons. All state via `Context` injection. Handlers use `functools.partial` binding; `__init__` must not raise — defer to `initialize()`.
+
+## Docker E2E
+
+- Local dev venv has no `astrbot`; e2e tests skip locally and must pass inside the real container:
+  `docker exec astrbot python -m pytest /AstrBot/data/plugins/astrbot_plugin_unified_chat/tests/e2e -q`
+- Test image: `soulter/astrbot:latest`, data volume `/AstrBot/data`, plugin dir `data/plugins/astrbot_plugin_unified_chat`.
 
 ## Code Style
 

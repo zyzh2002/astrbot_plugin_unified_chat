@@ -6,8 +6,8 @@ import contextlib
 from collections import deque
 from typing import Any
 
-from unified_chat.native import chunk_text
-from unified_chat.utils.hashing import dedup_hash
+from ..native import chunk_text
+from ..utils.hashing import dedup_hash
 
 
 class ChatService:
