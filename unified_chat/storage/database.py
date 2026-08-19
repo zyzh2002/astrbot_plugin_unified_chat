@@ -3,16 +3,20 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from sqlalchemy import event
-from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 from sqlmodel import SQLModel
+from sqlmodel.ext.asyncio.session import AsyncSession
 
 from unified_chat.storage.models import (  # noqa: F401 ensure tables
     LearningLog,
     Memory,
     MessageRecord,
+    UnifiedKV,
 )
 
 _engine: AsyncEngine | None = None
@@ -46,11 +50,31 @@ async def get_engine(db_path: str | Path) -> AsyncEngine:
         return engine
 
 
+@asynccontextmanager
+async def get_session() -> AsyncGenerator[AsyncSession, None]:
+    """Yield an AsyncSession bound to the singleton engine.
+
+    Caller is responsible for commit; rollback on exception is automatic.
+    Raises RuntimeError if engine not initialized.
+    """
+    engine = _engine
+    if engine is None:
+        raise RuntimeError("engine not initialized; call get_engine first")
+    factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    async with factory() as session:
+        try:
+            yield session
+        except Exception:
+            await session.rollback()
+            raise
+
+
 async def close_engine():  # pragma: no cover
     global _engine
-    if _engine is not None:
-        await _engine.dispose()
-        _engine = None
+    async with _engine_lock:
+        if _engine is not None:
+            await _engine.dispose()
+            _engine = None
 
 
 def reset_engine_for_tests():  # pragma: no cover - test helper

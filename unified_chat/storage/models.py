@@ -38,7 +38,7 @@ class Memory(SQLModel, table=True):
     access_count: int = Field(default=0)
     created_at: datetime = Field(default_factory=_utcnow, index=True)
     last_accessed_at: datetime = Field(default_factory=_utcnow)
-    expires_at: datetime | None = Field(default=None)
+    expires_at: datetime | None = Field(default=None, index=True)
 
 
 class LearningLog(SQLModel, table=True):
@@ -52,3 +52,13 @@ class LearningLog(SQLModel, table=True):
     output_text: str = Field(default="")
     provider_id: str = Field(default="", max_length=255)
     created_at: datetime = Field(default_factory=_utcnow, index=True)
+
+
+class UnifiedKV(SQLModel, table=True):
+    """Generic key-value for migration flags and small state."""
+
+    __tablename__ = "unified_kv"
+
+    key: str = Field(primary_key=True, max_length=255)
+    value: str = Field(default="")
+    updated_at: datetime = Field(default_factory=_utcnow)
