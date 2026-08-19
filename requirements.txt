@@ -1,0 +1,2 @@
+# Runtime deps are provided by AstrBot. Keep plugin itself dependency-free.
+# Dev deps are managed via pyproject.toml [project.optional-dependencies].dev

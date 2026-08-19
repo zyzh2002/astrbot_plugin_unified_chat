@@ -1,0 +1,45 @@
+[project]
+name = "astrbot-plugin-unified-chat"
+version = "0.1.0"
+description = "Unified conversational intelligence for AstrBot"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = []
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0",
+  "pytest-asyncio>=0.24",
+  "pytest-cov>=5.0",
+  "ruff>=0.8",
+  "maturin>=1.7",
+  "pyyaml>=6.0",
+]
+
+[build-system]
+requires = ["maturin>=1.7,<2.0"]
+build-backend = "maturin"
+
+[tool.maturin]
+module-name = "unified_chat._native"
+bindings = "pyo3"
+strip = true
+manifest-path = "rust/Cargo.toml"
+
+[tool.maturin.target.x86_64-unknown-linux-gnu]
+rustflags = ["-C", "target-cpu=x86-64-v3"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.coverage.run]
+source = ["unified_chat"]
+branch = true

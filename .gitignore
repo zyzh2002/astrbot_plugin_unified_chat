@@ -1,0 +1,58 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.pyd
+*.pyo
+.venv/
+venv/
+.env
+*.egg-info/
+dist/
+build/
+*.whl
+target/wheels/
+
+# Rust
+/target/
+**/*.rs.bk
+Cargo.lock
+rust/target/
+
+# Maturin / native
+unified_chat/_native*.so
+unified_chat/_native/*.so
+*.pdb
+
+# AstrBot runtime
+data/
+data/plugin_data/
+data/config/*_config.json
+*.db
+*.db-journal
+*.faiss
+*.db-shm
+*.db-wal
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Secrets
+.local/
+config/*_id_rsa
+*.env
+
+# Node skills
+node_modules/
+
+# Coverage
+.coverage
+htmlcov/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/

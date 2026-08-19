@@ -1,0 +1,63 @@
+"""AstrBot plugin entrypoint.
+
+Single Star subclass delegating to internal lifecycle. No business logic here.
+"""
+
+import contextlib
+
+from astrbot.api.event import AstrMessageEvent, filter
+from astrbot.api.star import Context, Star
+
+from unified_chat.core.lifecycle import PluginLifecycle
+
+
+class UnifiedChatPlugin(Star):
+    """Unified Chat — conversation, memory, learning and RAG."""
+
+    def __init__(self, context: Context):
+        super().__init__(context)
+        # Do not raise in __init__; defer to initialize().
+        self._lifecycle = PluginLifecycle(self, context)
+        self._initialized = False
+
+    async def initialize(self):
+        """Called after handler binding."""
+        try:
+            await self._lifecycle.on_load()
+            self._initialized = True
+        except Exception as e:  # pragma: no cover
+            from astrbot.api import logger
+
+            logger.error(f"[unified_chat] initialize failed: {e}", exc_info=True)
+
+    async def terminate(self):
+        """Cleanup before unload."""
+        with contextlib.suppress(Exception):
+            await self._lifecycle.on_unload()
+
+    @filter.event_message_type(filter.EventMessageType.ALL)
+    async def on_message(self, event: AstrMessageEvent):
+        if not self._initialized:
+            return
+        await self._lifecycle.handle_message(event)
+
+    @filter.on_llm_request()
+    async def on_llm_request(self, event: AstrMessageEvent, req):
+        if not self._initialized:
+            return
+        await self._lifecycle.handle_llm_request(event, req)
+
+    @filter.command("unified_status")
+    async def unified_status(self, event: AstrMessageEvent):
+        """Show plugin status."""
+        status = self._lifecycle.get_status() if self._initialized else "not initialized"
+        yield event.plain_result(f"[UnifiedChat] {status}")
+
+    @filter.command("unified_migrate")
+    async def unified_migrate(self, event: AstrMessageEvent, kb_name: str = ""):
+        """Migrate knowledge base to new embedding dimension. Admin only."""
+        if not self._initialized:
+            yield event.plain_result("Plugin not initialized")
+            return
+        result = await self._lifecycle.migrate_kb(event, kb_name.strip())
+        yield event.plain_result(result)

@@ -1,0 +1,62 @@
+{
+  "title": "Unified Chat Config",
+  "type": "object",
+  "properties": {
+    "enable_conversation_enhance": {
+      "type": "boolean",
+      "description": "Enable conversation enhancement (context compression, social injection)",
+      "default": true
+    },
+    "enable_persistent_memory": {
+      "type": "boolean",
+      "description": "Enable persistent memory (30-day retention, importance scoring)",
+      "default": true
+    },
+    "enable_adaptive_learning": {
+      "type": "boolean",
+      "description": "Enable adaptive learning pipeline (filter -> refine -> reinforce)",
+      "default": true
+    },
+    "rag_agentic": {
+      "type": "boolean",
+      "description": "RAG agentic mode: inject KnowledgeBaseQueryTool for LLM to call autonomously",
+      "default": true
+    },
+    "rag_kbs": {
+      "type": "list",
+      "description": "Knowledge bases used for RAG (multi-select)",
+      "items": { "type": "string" },
+      "default": [],
+      "_special": "select_knowledgebase"
+    },
+    "chat_provider_id": {
+      "type": "string",
+      "description": "Chat completion provider for learning/refine steps",
+      "default": "",
+      "_special": "select_provider"
+    },
+    "embedding_provider_id": {
+      "type": "string",
+      "description": "Embedding provider for memory/RAG indexing",
+      "default": "",
+      "_special": "select_provider"
+    },
+    "rerank_provider_id": {
+      "type": "string",
+      "description": "Rerank provider (optional)",
+      "default": "",
+      "_special": "select_provider"
+    },
+    "memory_cleanup_days": {
+      "type": "integer",
+      "description": "Days to retain low-importance memories",
+      "default": 30
+    },
+    "importance_threshold": {
+      "type": "float",
+      "description": "Importance below which memories are eligible for cleanup",
+      "default": 0.3
+    }
+  },
+  "required": []
+}
