@@ -32,7 +32,9 @@ class MessageRepo:
     async def exists_hash(h: str) -> bool:
         async with get_session() as session:
             result = await session.exec(
-                select(MessageRecord.id).where(MessageRecord.dedup_hash == h).limit(1)
+                select(MessageRecord.id)
+                .where(MessageRecord.dedup_hash == h)
+                .limit(1)
             )
             return result.first() is not None
 
@@ -53,6 +55,12 @@ class MemoryRepo:
         async with get_session() as session:
             result = await session.exec(select(Memory))
             return list(result.all())
+
+    @staticmethod
+    async def count() -> int:
+        async with get_session() as session:
+            result = await session.exec(select(func.count()).select_from(Memory))
+            return int(result.one())
 
     @staticmethod
     async def delete_expired(threshold: float, cutoff: datetime) -> int:
@@ -87,7 +95,9 @@ class MemoryRepo:
             return 0
         async with get_session() as session:
             rows = (
-                await session.exec(select(Memory).where(Memory.id.in_(ids)))  # type: ignore[attr-defined]
+                await session.exec(
+                    select(Memory).where(Memory.id.in_(ids))  # type: ignore[attr-defined]
+                )
             ).all()
             for r in rows:
                 await session.delete(r)
@@ -123,8 +133,24 @@ class MemoryRepo:
     @staticmethod
     async def exists_hash(h: str) -> bool:
         async with get_session() as session:
-            result = await session.exec(select(Memory.id).where(Memory.dedup_hash == h).limit(1))
+            result = await session.exec(
+                select(Memory.id).where(Memory.dedup_hash == h).limit(1)
+            )
             return result.first() is not None
+
+    @staticmethod
+    async def clear_kb_doc_ids() -> int:
+        async with get_session() as session:
+            rows = (
+                await session.exec(
+                    select(Memory).where(Memory.kb_doc_id.is_not(None))  # type: ignore[attr-defined]
+                )
+            ).all()
+            for r in rows:
+                r.kb_doc_id = None
+                session.add(r)
+            await session.commit()
+            return len(rows)
 
 
 class LearningLogRepo:
@@ -137,3 +163,13 @@ class LearningLogRepo:
             await session.commit()
             await session.refresh(log)
             return log
+
+    @staticmethod
+    async def count_by_stage(stage: str) -> int:
+        async with get_session() as session:
+            result = await session.exec(
+                select(func.count())
+                .select_from(LearningLog)
+                .where(LearningLog.stage == stage)
+            )
+            return int(result.one())
