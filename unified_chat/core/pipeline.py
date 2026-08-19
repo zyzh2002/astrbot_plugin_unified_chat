@@ -14,10 +14,17 @@ class MessagePipeline:
     never blocks on memory/learning work (specs 004/005).
     """
 
-    def __init__(self, config: Any, chat_service: Any, memory_service: Any = None):
+    def __init__(
+        self,
+        config: Any,
+        chat_service: Any,
+        memory_service: Any = None,
+        learning_service: Any = None,
+    ):
         self.config = config
         self.chat_service = chat_service
         self.memory_service = memory_service
+        self.learning_service = learning_service
 
     async def process(self, event: Any) -> None:
         if not (
@@ -48,6 +55,8 @@ class MessagePipeline:
         sender_id = self._sender_of(event)
         if self.memory_service is not None:
             await self.memory_service.maybe_store(event, sender_id)
+        if self.learning_service is not None:
+            await self.learning_service.maybe_learn(event, sender_id)
 
     @staticmethod
     def _sender_of(event: Any) -> str:

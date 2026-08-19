@@ -76,7 +76,13 @@ class PluginLifecycle:
             self._memory_service = MemoryService(self.context, config)
             await self._memory_service.ensure_memory_kb()
 
-            self._pipeline = MessagePipeline(config, self._chat_service, self._memory_service)
+            from unified_chat.services.learning_service import LearningService
+
+            self._learning_service = LearningService(self.context, config)
+
+            self._pipeline = MessagePipeline(
+                config, self._chat_service, self._memory_service, self._learning_service
+            )
 
             from unified_chat.core.cron import MemoryCleanupCron
 
