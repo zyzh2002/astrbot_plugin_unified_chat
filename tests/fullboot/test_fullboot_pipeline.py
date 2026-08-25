@@ -9,6 +9,18 @@ from .harness import wait_until
 pytestmark = pytest.mark.fullboot
 
 
+def _system_prompt_text(harness) -> str:
+    """Concatenated system-role contents seen by the mock LLM."""
+    parts = []
+    for req in harness.mock.requests:
+        for msg in req.get("messages") or []:
+            if msg.get("role") == "system":
+                content = msg.get("content")
+                if isinstance(content, str):
+                    parts.append(content)
+    return "\n".join(parts)
+
+
 def test_boot_and_status(harness):
     reply = harness.chat("/unified_status")
     assert "status=loaded" in reply
@@ -31,7 +43,7 @@ def test_message_persists_to_plugin_db(harness):
             "SELECT name FROM sqlite_master WHERE type='table'"
         )
     }
-    assert {"messages", "memories", "learning_logs", "unified_kv"} <= tables
+    assert {"messages", "memories", "learning_logs", "unified_kv", "memory_fts"} <= tables
 
 
 def test_social_context_injected_into_llm_prompt(harness):
@@ -40,9 +52,30 @@ def test_social_context_injected_into_llm_prompt(harness):
     harness.chat(first)
     harness.chat(second)
 
-    def seen():
-        return "cobalt-7f3a2b" in harness.mock.all_prompt_text()
+    assert wait_until(
+        lambda: "cobalt-7f3a2b" in _system_prompt_text(harness), timeout_s=30
+    ), f"token missing from system prompts; got:\n{_system_prompt_text(harness)[-2000:]}"
 
-    assert wait_until(seen, timeout_s=30), (
-        f"first message never reached LLM prompt; got:\n{harness.mock.all_prompt_text()[-2000:]}"
+
+def test_memory_atom_recalled_via_hybrid_path(harness):
+    marker = "sentinel-amber-9c41d7"
+    fact = (
+        f"please remember clearly that my favorite access code is {marker} "
+        "and write it down for later use"
     )
+    harness.chat(fact)
+
+    def stored():
+        rows = harness.sqlite_query(
+            f"SELECT COUNT(*) FROM memories WHERE content LIKE '%{marker}%'"
+        )
+        return bool(rows) and rows[0][0] >= 1
+
+    assert wait_until(stored, timeout_s=30), "memory atom was not stored"
+
+    probe = "what is my favorite access code again? hint: it starts with sentinel"
+    harness.chat(probe)
+
+    assert wait_until(
+        lambda: marker in _system_prompt_text(harness), timeout_s=30
+    ), "stored memory was not injected via hybrid retrieval"

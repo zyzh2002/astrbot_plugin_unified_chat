@@ -347,3 +347,35 @@ class TestBackupService:
         finally:
             await close_engine()
             reset_engine_for_tests()
+
+
+class TestSequentialStoreRegression:
+    async def test_two_stores_no_naive_datetime_crash(self):
+        import tempfile
+        from pathlib import Path
+
+        from unified_chat.storage.database import close_engine, get_engine, reset_engine_for_tests
+
+        reset_engine_for_tests()
+        with tempfile.TemporaryDirectory() as d:
+            await get_engine(Path(d) / "seq.db")
+            try:
+                service = _make_service()
+
+                class Ev:
+                    def __init__(self, t):
+                        self.message_str = t
+                        self.unified_msg_origin = "sess-seq"
+
+                await service.maybe_store(
+                    Ev("first message that is definitely long enough here"), "u1"
+                )
+                await service.maybe_store(
+                    Ev("second different message also long enough ok"), "u1"
+                )
+                from unified_chat.storage.repo import MemoryRepo
+
+                assert await MemoryRepo.count() == 2
+            finally:
+                await close_engine()
+                reset_engine_for_tests()

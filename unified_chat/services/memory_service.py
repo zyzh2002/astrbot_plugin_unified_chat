@@ -82,15 +82,20 @@ class MemoryService:
             self._kb_helper = None
             self._log_error("ensure_memory_kb")
 
+    @staticmethod
+    def _aware(dt: datetime) -> datetime:
+        return dt if dt.tzinfo is not None else dt.replace(tzinfo=UTC)
+
     def compute_importance(self, content: str, sender_id: str, existing: list[Memory]) -> float:
         now = datetime.now(UTC)
         freq = 0
         newest: datetime | None = None
         for m in existing:
-            if m.source == sender_id and (now - m.created_at).days < 7:
+            created = self._aware(m.created_at)
+            if m.source == sender_id and (now - created).days < 7:
                 freq += 1
-                if newest is None or m.created_at > newest:
-                    newest = m.created_at
+                if newest is None or created > newest:
+                    newest = created
         recency_hours = 0.0 if newest is None else max(0.0, (now - newest).total_seconds() / 3600.0)
         return score_importance(len(content), recency_hours, freq)
 

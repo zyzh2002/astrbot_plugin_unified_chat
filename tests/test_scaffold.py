@@ -74,3 +74,18 @@ def test_main_importable():
     import main  # noqa: F401
 
     assert True
+
+
+def test_conf_schema_is_valid_flat_json():
+    import json
+    import pathlib
+
+    schema = json.loads(pathlib.Path("_conf_schema.json").read_text(encoding="utf-8"))
+    assert isinstance(schema, dict)
+    valid_types = {
+        "int", "float", "bool", "string", "text",
+        "list", "file", "object", "template_list", "dict",
+    }
+    for key, item in schema.items():
+        assert isinstance(item, dict), f"{key} not a flat item"
+        assert item.get("type") in valid_types, f"{key} has invalid type"

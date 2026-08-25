@@ -63,7 +63,6 @@
     "description": "启动时自动下载匹配平台的原生加速库（失败自动回退纯Python）",
     "type": "bool",
     "default": true
-  }
   },
   "memory_session_isolation": {
     "description": "记忆按会话隔离（关闭后全局共享）",
