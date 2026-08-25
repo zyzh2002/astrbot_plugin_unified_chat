@@ -10,7 +10,6 @@ NOTE: import astrbot.api FIRST (AstrBot import graph is order-sensitive).
 """
 
 import asyncio
-import sys
 from pathlib import Path
 
 import pytest
