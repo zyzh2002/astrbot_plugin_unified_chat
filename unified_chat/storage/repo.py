@@ -256,3 +256,71 @@ class MemoryHybridRepo:
                 await session.exec(select(Memory).where(Memory.id.in_(ids)))
             ).all()
             return list(rows)
+
+
+class MessageSessionRepo:
+    """Per-session message window helpers for summarization."""
+
+    @staticmethod
+    async def count_by_session(umo: str) -> int:
+        async with get_session() as session:
+            result = await session.exec(
+                select(func.count()).select_from(MessageRecord).where(MessageRecord.umo == umo)
+            )
+            return int(result.one())
+
+    @staticmethod
+    async def list_recent_by_session(umo: str, limit: int) -> list[MessageRecord]:
+        if limit <= 0:
+            return []
+        async with get_session() as session:
+            rows = (
+                await session.exec(
+                    select(MessageRecord)
+                    .where(MessageRecord.umo == umo)
+                    .order_by(MessageRecord.created_at.desc(), MessageRecord.id.desc())
+                    .limit(limit)
+                )
+            ).all()
+            return list(reversed(rows))
+
+
+class MemoryLookupRepo:
+    """Single-row memory lookups."""
+
+    @staticmethod
+    async def get_by_hash(h: str) -> Memory | None:
+        if not h:
+            return None
+        async with get_session() as session:
+            rows = (
+                await session.exec(select(Memory).where(Memory.dedup_hash == h).limit(1))
+            ).all()
+            return rows[0] if rows else None
+
+
+class MemoryAdminRepo:
+    """Aggregation and admin operations over memories."""
+
+    @staticmethod
+    async def count_by_type() -> dict[str, int]:
+        async with get_session() as session:
+            rows = (
+                await session.exec(
+                    select(Memory.memory_type, func.count())
+                    .select_from(Memory)
+                    .group_by(Memory.memory_type)
+                )
+            ).all()
+            return {str(row[0]): int(row[1]) for row in rows}
+
+    @staticmethod
+    async def delete_by_session(session_id: str) -> int:
+        if not session_id:
+            return 0
+        async with get_session() as session:
+            rows = (
+                await session.exec(select(Memory).where(Memory.session_id == session_id))
+            ).all()
+            ids = [row.id for row in rows if row.id is not None]
+        return await MemoryRepo.delete_by_ids(ids)

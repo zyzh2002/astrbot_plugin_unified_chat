@@ -80,3 +80,16 @@ async def inject_memories(event: Any, req: Any, config: Any, memory_service: Any
             from astrbot.api import logger  # type: ignore
 
             logger.error("[unified_chat] inject_memories failed", exc_info=True)
+
+
+async def inject_memory_tools(event: Any, req: Any, config: Any, memory_service: Any) -> None:
+    """Add agent memory recall/memorize tools; never raises."""
+    try:
+        from ..services.memory_tools import inject_memory_tools as _inject
+
+        await _inject(event, req, config, memory_service)
+    except Exception:
+        with contextlib.suppress(Exception):
+            from astrbot.api import logger  # type: ignore
+
+            logger.error("[unified_chat] inject_memory_tools failed", exc_info=True)

@@ -23,6 +23,39 @@ class MemoryService:
         self.context = context
         self.config = config
         self._kb_helper: Any | None = None
+        from .memory_summarizer import MemorySummarizer
+
+        self.summarizer = MemorySummarizer(context, config)
+
+    async def maybe_summarize(self, event: Any) -> int:
+        umo = getattr(event, "unified_msg_origin", "") or ""
+        if not umo:
+            return 0
+        return await self.summarizer.maybe_summarize(umo)
+
+    async def memorize_text(
+        self, text: str, source: str = "agent", mtype: str | None = None
+    ) -> int | None:
+        """Explicitly store one durable atom; returns its id."""
+        resolved_type = mtype or classify_memory(text)
+        dedup = ChatService.hash_of(text)
+        existing = await repos.MemoryRepo.get_by_hash(dedup)
+        if existing is not None:
+            return existing.id
+        from datetime import UTC, datetime, timedelta
+
+        mem = await repos.MemoryRepo.add(
+            Memory(
+                content=text,
+                importance=0.7,
+                source=source,
+                dedup_hash=dedup,
+                memory_type=resolved_type,
+                expires_at=datetime.now(UTC) + timedelta(days=ttl_for(resolved_type)),
+            )
+        )
+        await repos.MemoryFts.index_add(mem.id, text, mem.session_id)
+        return mem.id
 
     async def ensure_memory_kb(self) -> None:
         """Bind the memory KB helper; SQLite-only mode on any failure."""

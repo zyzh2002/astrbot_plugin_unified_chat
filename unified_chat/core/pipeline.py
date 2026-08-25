@@ -55,6 +55,7 @@ class MessagePipeline:
         sender_id = self._sender_of(event)
         if self.memory_service is not None:
             await self.memory_service.maybe_store(event, sender_id)
+            await self.memory_service.maybe_summarize(event)
         if self.learning_service is not None:
             await self.learning_service.maybe_learn(event, sender_id)
 

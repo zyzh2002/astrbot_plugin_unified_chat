@@ -50,5 +50,8 @@ async def test_handle_llm_request_agentic_off(tmp_path):
         await lc.on_load()
         req = FakeReq()
         await lc.handle_llm_request(None, req)
-        assert req.func_tool is None
+        kb_tool = (
+            req.func_tool.get_tool("unified_chat_kb_query") if req.func_tool is not None else None
+        )
+        assert kb_tool is None
         await lc.on_unload()

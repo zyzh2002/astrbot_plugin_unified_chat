@@ -112,7 +112,13 @@ async def test_pipeline_writes_to_temp_db(tmp_path):
         tables = {
             r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table'")
         }
-        assert tables == {"messages", "memories", "learning_logs", "unified_kv"}
+        assert tables >= {
+            "messages",
+            "memories",
+            "learning_logs",
+            "unified_kv",
+            "memory_fts",
+        }
         n_messages = con.execute("SELECT COUNT(*) FROM messages").fetchone()[0]
         n_memories = con.execute("SELECT COUNT(*) FROM memories").fetchone()[0]
         assert n_messages == 1

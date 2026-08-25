@@ -193,3 +193,157 @@ class TestStoreStamping:
         assert await MemoryFts.search("unique-zebra-token")
         await MemoryRepo.delete_by_ids([mem.id])
         assert not await MemoryFts.search("unique-zebra-token")
+
+
+class TestSummarizer:
+    async def _service(self, raw: str):
+        import tempfile
+        from pathlib import Path
+
+        from unified_chat.services.memory_summarizer import MemorySummarizer
+        from unified_chat.storage.database import close_engine, reset_engine_for_tests
+
+        class Resp:
+            completion_text = raw
+
+        class Ctx:
+            async def llm_generate(self, **kwargs):
+                self.kwargs = kwargs
+                return Resp()
+
+        class Cfg:
+            summary_batch_size = 3
+            chat_provider_id = "prov"
+
+        reset_engine_for_tests()
+
+        from unified_chat.storage.database import get_engine as _ge
+
+        d = tempfile.mkdtemp()
+        self._tmpdir = d
+        await _ge(Path(d) / "sum.db")
+
+        async def cleanup():
+            await close_engine()
+            reset_engine_for_tests()
+
+        self._cleanup = cleanup
+        return MemorySummarizer(Ctx(), Cfg())
+
+    async def test_observe_triggers_every_nth(self):
+        service = await self._service("[]")
+        assert service.observe("s") is False
+        assert service.observe("s") is False
+        assert service.observe("s") is True
+        await self._cleanup()
+
+    async def test_parse_garbage_returns_empty(self):
+        from unified_chat.services.memory_summarizer import parse_summary_items
+
+        assert parse_summary_items("") == []
+        assert parse_summary_items("no json here at all") == []
+        assert parse_summary_items('{"not": "a list"}') == []
+        assert parse_summary_items('[{"content": ""}]') == []
+
+    async def test_parse_valid_and_type_fallback(self):
+        from unified_chat.services.memory_summarizer import parse_summary_items
+
+        items = parse_summary_items(
+            'sure! here you go: [{"content": "likes blue color", "type": "PREFERENCE"},'
+            ' {"content": "has a sister named Ann"}] thanks'
+        )
+        assert items == [("likes blue color", "PREFERENCE"), ("has a sister named Ann", "FACTUAL")]
+
+    async def test_summarize_session_stores_atoms(self):
+        from unified_chat.storage.models import MessageRecord
+        from unified_chat.storage.repo import MemoryRepo, MessageRepo
+
+        service = await self._service(
+            '[{"content": "user prefers dark mode", "type": "PREFERENCE"}]'
+        )
+        umo = "sess-sum:1"
+        for i in range(3):
+            await MessageRepo.add(
+                MessageRecord(
+                    umo=umo, sender_id="u", content=f"msg {i} about settings",
+                    dedup_hash=f"h{i}",
+                )
+            )
+        stored = await service.summarize_session(umo)
+        assert stored == 1
+        rows = await MemoryRepo.list_all()
+        assert rows[0].memory_type == "PREFERENCE"
+        assert rows[0].source == "summary"
+        await self._cleanup()
+
+    async def test_too_few_messages_skips_llm(self):
+        from unified_chat.storage.models import MessageRecord
+        from unified_chat.storage.repo import MessageRepo
+
+        service = await self._service('[{"content": "x fact here", "type": "FACTUAL"}]')
+        await MessageRepo.add(
+            MessageRecord(umo="s2", sender_id="u", content="only one msg here", dedup_hash="h")
+        )
+        assert await service.summarize_session("s2") == 0
+        await self._cleanup()
+
+
+class TestBackupService:
+    def _make_db(self, root):
+        import sqlite3
+        from pathlib import Path
+
+        db = Path(root) / "unified_chat.db"
+        con = sqlite3.connect(str(db))
+        con.execute("CREATE TABLE t (x TEXT)")
+        con.execute("INSERT INTO t VALUES ('v')")
+        con.commit()
+        con.close()
+        return db
+
+    def _service(self, db, keep_last=2, monkeypatch=None):
+        from unified_chat.services.backup_service import BackupService
+
+        class Cfg:
+            backup_keep_last = keep_last
+
+        return BackupService(Cfg(), db)
+
+    def test_run_backup_creates_snapshot(self, tmp_path):
+        db = self._make_db(tmp_path)
+        service = self._service(db)
+        dest = service.run_backup("manual")
+        assert dest is not None and (dest / "unified_chat.db").exists()
+
+    def test_retention_prunes_oldest(self, tmp_path):
+        import time
+
+        db = self._make_db(tmp_path)
+        service = self._service(db)
+        for _ in range(4):
+            service.run_backup("daily")
+            time.sleep(1.1)  # ensure distinct second-resolution stamps
+        assert len(service.list_backups()) == 2
+
+    async def test_version_backup_once(self, tmp_path, monkeypatch):
+        import tempfile
+        from pathlib import Path
+
+        from unified_chat.services.backup_service import BackupService
+        from unified_chat.storage.database import close_engine, get_engine, reset_engine_for_tests
+
+        reset_engine_for_tests()
+        d = Path(tempfile.mkdtemp())
+        await get_engine(d / "unified_chat.db")
+        try:
+            class Cfg:
+                backup_keep_last = 5
+
+            service = BackupService(Cfg(), d / "unified_chat.db")
+            first = await service.maybe_backup_version("0.1.0")
+            second = await service.maybe_backup_version("0.1.0")
+            third = await service.maybe_backup_version("0.2.0")
+            assert first is True and second is False and third is True
+        finally:
+            await close_engine()
+            reset_engine_for_tests()

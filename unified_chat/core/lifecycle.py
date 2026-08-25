@@ -33,6 +33,7 @@ class PluginLifecycle:
         self._migration_tasks: list[Any] = []
         self._needs_migration = False
         self._prefetch_task: Any | None = None
+        self._backup_service: Any | None = None
 
     async def on_load(self):
         try:
@@ -92,7 +93,9 @@ class PluginLifecycle:
 
             from .cron import MemoryCleanupCron
 
-            self._cron = MemoryCleanupCron(self._memory_service)
+            self._cron = MemoryCleanupCron(
+                self._memory_service, backup_service=self._backup_service
+            )
             self._cron.start()
 
             from ..storage import kv as kv_store
@@ -108,6 +111,16 @@ class PluginLifecycle:
             from ..services.migration_service import MigrationService
 
             self._migration_service = MigrationService(self.context, config)
+
+            from ..services.backup_service import BackupService
+
+            self._backup_service = BackupService(config, db_path)
+            try:
+                from ..native.bootstrap import plugin_version
+
+                await self._backup_service.maybe_backup_version(plugin_version())
+            except Exception:
+                pass
 
             try:
                 from ..native import bootstrap
@@ -176,6 +189,15 @@ class PluginLifecycle:
                     logger.error("[unified_chat] inject_social_context failed", exc_info=True)
         if self._memory_service is not None:
             try:
+                from .hooks import inject_memory_tools
+
+                await inject_memory_tools(event, req, self._config, self._memory_service)
+            except Exception:
+                with contextlib.suppress(Exception):
+                    from astrbot.api import logger  # type: ignore
+
+                    logger.error("[unified_chat] inject_memory_tools failed", exc_info=True)
+            try:
                 from .hooks import inject_memories
 
                 await inject_memories(event, req, self._config, self._memory_service)
@@ -184,6 +206,63 @@ class PluginLifecycle:
                     from astrbot.api import logger  # type: ignore
 
                     logger.error("[unified_chat] inject_memories failed", exc_info=True)
+
+    async def umem(self, event: AstrMessageEvent, action: str = "", arg: str = "") -> str:
+        """Handle /umem subcommands. Returns plain text reply."""
+        if self._memory_service is None or self._config is None:
+            return "[umem] Plugin not initialized"
+        action = (action or "").strip().lower()
+        arg = (arg or "").strip()
+        if action in ("", "help"):
+            return (
+                "[umem] Usage:\n"
+                "/umem status - counts by type\n"
+                "/umem search <query> - hybrid search\n"
+                "/umem forget <id> - delete one memory\n"
+                "/umem backup - take a DB backup now\n"
+                "/umem reset - clear this session's memories"
+            )
+        try:
+            if action == "status":
+                from ..storage import repo as repos
+
+                by_type = await repos.MemoryAdminRepo.count_by_type()
+                total = sum(by_type.values()) or 0
+                parts = [f"{k}={v}" for k, v in sorted(by_type.items())] or ["empty"]
+                backups = (
+                    len(self._backup_service.list_backups())
+                    if self._backup_service is not None
+                    else 0
+                )
+                return f"[umem] total={total} | {' '.join(parts)} | backups={backups}"
+            if action == "search":
+                if not arg:
+                    return "[umem] Usage: /umem search <query>"
+                hits = await self._memory_service.retrieve_hybrid(arg, top_k=5)
+                if not hits:
+                    return "[umem] no matches"
+                return "\n".join(f"[{m.id}] ({m.memory_type}) {m.content}" for m in hits)
+            if action == "forget":
+                from ..storage import repo as repos
+
+                if not arg.isdigit():
+                    return "[umem] Usage: /umem forget <id>"
+                removed = await repos.MemoryRepo.delete_by_ids([int(arg)])
+                return f"[umem] deleted {removed}"
+            if action == "backup":
+                if self._backup_service is None:
+                    return "[umem] backup unavailable"
+                dest = self._backup_service.run_backup("manual")
+                return f"[umem] backup -> {dest.name}" if dest else "[umem] backup failed"
+            if action == "reset":
+                from ..storage import repo as repos
+
+                umo = getattr(event, "unified_msg_origin", "") or ""
+                removed = await repos.MemoryAdminRepo.delete_by_session(umo)
+                return f"[umem] cleared {removed} memories for this session"
+            return "[umem] unknown action; try /umem help"
+        except Exception as exc:  # pragma: no cover - defensive
+            return f"[umem] error: {exc}"
 
     def get_status(self) -> str:
         if self._config is not None and self._data_dir is not None:

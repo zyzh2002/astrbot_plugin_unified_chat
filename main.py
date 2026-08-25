@@ -69,3 +69,12 @@ class UnifiedChatPlugin(Star):
             return
         result = await self._lifecycle.migrate_kb(event, kb_name.strip())
         yield event.plain_result(result)
+
+    @filter.command("umem")
+    async def umem(self, event: AstrMessageEvent, action: str = "", arg: str = ""):
+        """Memory management: status/search/forget/backup/reset."""
+        if not self._initialized:
+            yield event.plain_result("[umem] Plugin not initialized")
+            return
+        result = await self._lifecycle.umem(event, action.strip(), arg.strip())
+        yield event.plain_result(result)

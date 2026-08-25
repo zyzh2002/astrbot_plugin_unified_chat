@@ -11,8 +11,9 @@ from typing import Any
 class MemoryCleanupCron:
     """Daily 03:00 cleanup of low-importance expired memories."""
 
-    def __init__(self, memory_service: Any):
+    def __init__(self, memory_service: Any, backup_service: Any | None = None):
         self.memory_service = memory_service
+        self.backup_service = backup_service
         self._task: asyncio.Task | None = None
 
     def start(self) -> None:
@@ -45,10 +46,16 @@ class MemoryCleanupCron:
 
     async def _tick(self) -> int:
         try:
-            return await self.memory_service.delete_expired_memories()
+            removed = await self.memory_service.delete_expired_memories()
         except Exception:
             self._log_error("tick")
-            return 0
+            removed = 0
+        if self.backup_service is not None:
+            try:
+                await self.backup_service.daily_tick()
+            except Exception:
+                self._log_error("backup tick")
+        return removed
 
     @staticmethod
     def _log_error(msg: str) -> None:
