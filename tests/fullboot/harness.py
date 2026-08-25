@@ -62,7 +62,7 @@ class AstrBotHarness:
     # ---- lifecycle -------------------------------------------------
 
     @classmethod
-    def start(cls) -> AstrBotHarness:
+    def start(cls, plugin_config: dict | None = None) -> AstrBotHarness:
         from .mock_llm import MockLLMServer
 
         mock = MockLLMServer()
@@ -116,6 +116,15 @@ class AstrBotHarness:
         (data_dir / "cmd_config.json").write_text(
             json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8"
         )
+        if plugin_config:
+            cfg_dir = data_dir / "config"
+            cfg_dir.mkdir(parents=True, exist_ok=True)
+            (
+                cfg_dir / f"{PLUGIN_PKG}_config.json"
+            ).write_text(
+                json.dumps(plugin_config, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
         (root / "unified_chat_mock_port.txt").write_text(str(mock.port))
 
         exe_dir = Path(sys.executable).parent

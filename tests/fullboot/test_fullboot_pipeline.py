@@ -79,3 +79,18 @@ def test_memory_atom_recalled_via_hybrid_path(harness):
     assert wait_until(
         lambda: marker in _system_prompt_text(harness), timeout_s=30
     ), "stored memory was not injected via hybrid retrieval"
+
+
+def test_humanize_enabled_private_still_replies():
+    """Regression: with humanize on, private/webchat chats must always reply."""
+    from .harness import AstrBotHarness
+
+    harness = AstrBotHarness.start(plugin_config={"humanize_enable": True})
+    try:
+        reply = harness.chat("/unified_status")
+        assert "status=loaded" in reply
+        probe = "plain private message that must get an answer regardless of gate"
+        reply2 = harness.chat(probe)
+        assert reply2.strip(), "private chat got swallowed by the gate"
+    finally:
+        harness.stop()

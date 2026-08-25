@@ -33,3 +33,23 @@ def test_native_autodownload_roundtrip():
     assert PluginConfig.from_dict({}).native_autodownload is True
     assert PluginConfig.from_dict({"native_autodownload": "yes"}).native_autodownload is True
     assert "native_autodownload" in PluginConfig.from_dict({}).to_dict()
+
+
+def test_humanize_keys_roundtrip():
+    from unified_chat.config import PluginConfig
+
+    cfg = PluginConfig.from_dict(
+        {
+            "humanize_enable": True,
+            "humanize_base_probability": 0.4,
+            "blacklist_users": ["10001", 10002],
+            "trigger_keywords": ["小助手"],
+            "blocked_keywords": [],
+        }
+    )
+    assert cfg.humanize_enable is True
+    assert abs(cfg.humanize_base_probability - 0.4) < 1e-9
+    assert cfg.blacklist_users == ["10001", "10002"]
+    assert PluginConfig.from_dict({}).humanize_enable is False
+    dump = cfg.to_dict()
+    assert "blacklist_users" in dump and "humanize_enable" in dump

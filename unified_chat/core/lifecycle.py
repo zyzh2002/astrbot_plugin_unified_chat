@@ -34,6 +34,9 @@ class PluginLifecycle:
         self._needs_migration = False
         self._prefetch_task: Any | None = None
         self._backup_service: Any | None = None
+        self._humanize: Any | None = None
+        self._pending_merge: dict[str, str] = {}
+        self._proactive: Any | None = None
 
     async def on_load(self):
         try:
@@ -91,12 +94,22 @@ class PluginLifecycle:
                 config, self._chat_service, self._memory_service, self._learning_service
             )
 
+            from ..services.humanize_service import HumanizeService
+
+            self._humanize = HumanizeService(self.context, config)
+
+            from ..services.humanize_proactive import ProactiveService
+
+            self._proactive = ProactiveService(self.context, config)
+
             from .cron import MemoryCleanupCron
 
             self._cron = MemoryCleanupCron(
                 self._memory_service, backup_service=self._backup_service
             )
             self._cron.start()
+            if config.humanize_proactive:
+                self._proactive.start()
 
             from ..storage import kv as kv_store
 
@@ -144,6 +157,9 @@ class PluginLifecycle:
             if self._cron is not None:
                 self._cron.stop()
         with contextlib.suppress(Exception):
+            if self._proactive is not None:
+                self._proactive.stop()
+        with contextlib.suppress(Exception):
             from ..storage.database import close_engine
 
             await close_engine()
@@ -156,6 +172,26 @@ class PluginLifecycle:
     async def handle_message(self, event: AstrMessageEvent):
         if self._pipeline is None:
             return
+        if self._humanize is not None and getattr(
+            self._config, "humanize_enable", False
+        ):
+            try:
+                if self._humanize.blocked_keyword_hit(event):
+                    event.stop_event()
+                    return
+                outcome = await self._humanize.process(event)
+                umo = getattr(event, "unified_msg_origin", "") or ""
+                if not outcome.allow:
+                    event.stop_event()
+                    if outcome.reason == "blacklisted":
+                        return  # blacklisted users leave no trace
+                elif outcome.merged_context:
+                    self._pending_merge[umo] = outcome.merged_context
+            except Exception:
+                with contextlib.suppress(Exception):
+                    from astrbot.api import logger  # type: ignore
+
+                    logger.error("[unified_chat] humanize gate failed", exc_info=True)
         try:
             await self._pipeline.process(event)
         except Exception:
@@ -182,6 +218,14 @@ class PluginLifecycle:
                 from .hooks import inject_social_context
 
                 await inject_social_context(event, req, self._config, self._chat_service)
+                umo = getattr(event, "unified_msg_origin", "") or ""
+                merged = self._pending_merge.pop(umo, "")
+                if merged:
+                    contexts = getattr(req, "contexts", None)
+                    if contexts is None:
+                        contexts = []
+                        req.contexts = contexts
+                    contexts.append({"role": "system", "content": merged})
             except Exception:
                 with contextlib.suppress(Exception):
                     from astrbot.api import logger  # type: ignore

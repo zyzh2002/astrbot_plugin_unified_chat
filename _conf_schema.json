@@ -22,7 +22,9 @@
   "rag_kbs": {
     "description": "RAG 关联知识库（多选）",
     "type": "list",
-    "items": { "type": "string" },
+    "items": {
+      "type": "string"
+    },
     "default": [],
     "_special": "select_knowledgebase"
   },
@@ -78,5 +80,85 @@
     "description": "数据库备份保留份数",
     "type": "int",
     "default": 10
+  },
+  "humanize_enable": {
+    "description": "群聊拟人化总开关（读空气门控/注意力/缓存，默认关闭）",
+    "type": "bool",
+    "default": false
+  },
+  "humanize_base_probability": {
+    "description": "群聊基础回复概率 (0-1)",
+    "type": "float",
+    "default": 0.15
+  },
+  "humanize_after_reply_probability": {
+    "description": "自己回复后窗口期内的附加概率 (0-1)",
+    "type": "float",
+    "default": 0.8
+  },
+  "humanize_boost_window_seconds": {
+    "description": "回复后概率提升窗口（秒）",
+    "type": "int",
+    "default": 120
+  },
+  "humanize_attention_enabled": {
+    "description": "注意力机制（按用户衰减加分）",
+    "type": "bool",
+    "default": true
+  },
+  "humanize_attention_boost_max": {
+    "description": "注意力加成上限 (0-1)",
+    "type": "float",
+    "default": 0.3
+  },
+  "humanize_fatigue_penalty_max": {
+    "description": "连续回复疲劳惩罚上限 (0-1)",
+    "type": "float",
+    "default": 0.35
+  },
+  "humanize_air_reading_llm": {
+    "description": "LLM 读空气二段判断（超时兜底为回复）",
+    "type": "bool",
+    "default": true
+  },
+  "humanize_air_reading_provider_id": {
+    "description": "读空气判断模型（留空用对话模型）",
+    "type": "string",
+    "default": "",
+    "_special": "select_provider"
+  },
+  "humanize_proactive": {
+    "description": "沉默后主动发起话题（默认关闭）",
+    "type": "bool",
+    "default": false
+  },
+  "humanize_proactive_min_silence_minutes": {
+    "description": "主动开口前最少沉默分钟数",
+    "type": "int",
+    "default": 45
+  },
+  "blacklist_users": {
+    "description": "用户黑名单（ID 列表，消息直接忽略）",
+    "type": "list",
+    "items": {
+      "type": "string"
+    },
+    "default": []
+  },
+  "trigger_keywords": {
+    "description": "触发词（命中必回复）",
+    "type": "list",
+    "items": {
+      "type": "string"
+    },
+    "default": []
+  },
+  "blocked_keywords": {
+    "description": "屏蔽词（命中整条丢弃）",
+    "type": "list",
+    "items": {
+      "type": "string"
+    },
+    "default": []
   }
 }

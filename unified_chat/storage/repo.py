@@ -324,3 +324,27 @@ class MemoryAdminRepo:
             ).all()
             ids = [row.id for row in rows if row.id is not None]
         return await MemoryRepo.delete_by_ids(ids)
+
+
+class MessageScanRepo:
+    """Cross-session scans for proactive scheduling."""
+
+    @staticmethod
+    async def distinct_umos(limit: int = 50) -> list[tuple[str, float]]:
+        async with get_session() as session:
+            rows = (
+                await session.exec(
+                    select(
+                        MessageRecord.umo, func.max(MessageRecord.created_at)
+                    )
+                    .group_by(MessageRecord.umo)
+                    .limit(limit)
+                )
+            ).all()
+            result = []
+            for umo, last_ts in rows:
+                if hasattr(last_ts, "timestamp"):
+                    result.append((str(umo), float(last_ts.timestamp())))
+                else:
+                    result.append((str(umo), 0.0))
+            return result

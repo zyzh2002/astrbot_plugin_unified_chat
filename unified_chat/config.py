@@ -20,6 +20,20 @@ DEFAULTS = {
     "memory_session_isolation": True,
     "summary_batch_size": 10,
     "backup_keep_last": 10,
+    "humanize_enable": False,
+    "humanize_base_probability": 0.15,
+    "humanize_after_reply_probability": 0.8,
+    "humanize_boost_window_seconds": 120,
+    "humanize_attention_enabled": True,
+    "humanize_attention_boost_max": 0.3,
+    "humanize_fatigue_penalty_max": 0.35,
+    "humanize_air_reading_llm": True,
+    "humanize_air_reading_provider_id": "",
+    "humanize_proactive": False,
+    "humanize_proactive_min_silence_minutes": 45,
+    "blacklist_users": [],
+    "trigger_keywords": [],
+    "blocked_keywords": [],
 }
 
 
@@ -40,6 +54,20 @@ class PluginConfig:
     memory_session_isolation: bool = True
     summary_batch_size: int = 10
     backup_keep_last: int = 10
+    humanize_enable: bool = False
+    humanize_base_probability: float = 0.15
+    humanize_after_reply_probability: float = 0.8
+    humanize_boost_window_seconds: int = 120
+    humanize_attention_enabled: bool = True
+    humanize_attention_boost_max: float = 0.3
+    humanize_fatigue_penalty_max: float = 0.35
+    humanize_air_reading_llm: bool = True
+    humanize_air_reading_provider_id: str = ""
+    humanize_proactive: bool = False
+    humanize_proactive_min_silence_minutes: int = 45
+    blacklist_users: list[str] = field(default_factory=list)
+    trigger_keywords: list[str] = field(default_factory=list)
+    blocked_keywords: list[str] = field(default_factory=list)
     data_dir: str = ""
 
     @classmethod
@@ -92,6 +120,30 @@ class PluginConfig:
             memory_cleanup_days=mcd,
             importance_threshold=thr,
             memory_kb_name=str(pick("memory_kb_name", d["memory_kb_name"])),
+            blacklist_users=[
+                str(x)
+                for x in (
+                    raw.get("blacklist_users")
+                    if isinstance(raw.get("blacklist_users"), list)
+                    else []
+                )
+            ],
+            trigger_keywords=[
+                str(x)
+                for x in (
+                    raw.get("trigger_keywords")
+                    if isinstance(raw.get("trigger_keywords"), list)
+                    else []
+                )
+            ],
+            blocked_keywords=[
+                str(x)
+                for x in (
+                    raw.get("blocked_keywords")
+                    if isinstance(raw.get("blocked_keywords"), list)
+                    else []
+                )
+            ],
             native_autodownload=bool(
                 pick("native_autodownload", d["native_autodownload"])
             ),
@@ -100,6 +152,38 @@ class PluginConfig:
             ),
             summary_batch_size=int(pick("summary_batch_size", d["summary_batch_size"])),
             backup_keep_last=int(pick("backup_keep_last", d["backup_keep_last"])),
+            humanize_enable=bool(pick("humanize_enable", d["humanize_enable"])),
+            humanize_base_probability=float(
+                pick("humanize_base_probability", d["humanize_base_probability"])
+            ),
+            humanize_after_reply_probability=float(
+                pick("humanize_after_reply_probability", d["humanize_after_reply_probability"])
+            ),
+            humanize_boost_window_seconds=int(
+                pick("humanize_boost_window_seconds", d["humanize_boost_window_seconds"])
+            ),
+            humanize_attention_enabled=bool(
+                pick("humanize_attention_enabled", d["humanize_attention_enabled"])
+            ),
+            humanize_attention_boost_max=float(
+                pick("humanize_attention_boost_max", d["humanize_attention_boost_max"])
+            ),
+            humanize_fatigue_penalty_max=float(
+                pick("humanize_fatigue_penalty_max", d["humanize_fatigue_penalty_max"])
+            ),
+            humanize_air_reading_llm=bool(
+                pick("humanize_air_reading_llm", d["humanize_air_reading_llm"])
+            ),
+            humanize_air_reading_provider_id=str(
+                pick("humanize_air_reading_provider_id", d["humanize_air_reading_provider_id"])
+            ),
+            humanize_proactive=bool(pick("humanize_proactive", d["humanize_proactive"])),
+            humanize_proactive_min_silence_minutes=int(
+                pick(
+                    "humanize_proactive_min_silence_minutes",
+                    d["humanize_proactive_min_silence_minutes"],
+                )
+            ),
             data_dir=data_dir,
         )
 
@@ -120,4 +204,8 @@ class PluginConfig:
             "memory_session_isolation": self.memory_session_isolation,
             "summary_batch_size": self.summary_batch_size,
             "backup_keep_last": self.backup_keep_last,
+            "humanize_enable": self.humanize_enable,
+            "blacklist_users": self.blacklist_users,
+            "trigger_keywords": self.trigger_keywords,
+            "blocked_keywords": self.blocked_keywords,
         }
