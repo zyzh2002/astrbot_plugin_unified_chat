@@ -27,3 +27,16 @@ uv run maturin develop --release
 ```
 
 详见各子文档。
+
+## 功能总览
+
+- **对话增强**：社交上下文注入、去重窗口、指令过滤
+- **持久记忆**：原子化分类记忆、FTS5+关键词混合检索、会话隔离、LLM 批量总结、
+  Agent 主动回忆/写入工具、自动备份
+- **自适应学习**：filter→refine→reinforce 流水线、群黑话学习与审核、
+  好感度/情绪体系、人格建议审查链
+- **RAG**：agentic 知识库查询工具注入、嵌入变更全量迁移
+- **群聊拟人**（可选）：读空气门控、注意力/疲劳、未回复缓存合并、主动话题
+- **原生加速**：Rust 扩展四平台自动分发（abi3），失败回退纯 Python
+
+命令：`/unified_status` `/unified_migrate` `/umem …` `/uslang …` `/upersona …`
