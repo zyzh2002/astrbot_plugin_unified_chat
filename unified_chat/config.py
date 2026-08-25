@@ -16,6 +16,7 @@ DEFAULTS = {
     "memory_cleanup_days": 30,
     "importance_threshold": 0.3,
     "memory_kb_name": "unified_chat_memories",
+    "native_autodownload": True,
 }
 
 
@@ -32,6 +33,7 @@ class PluginConfig:
     memory_cleanup_days: int = 30
     importance_threshold: float = 0.3
     memory_kb_name: str = "unified_chat_memories"
+    native_autodownload: bool = True
     data_dir: str = ""
 
     @classmethod
@@ -84,6 +86,9 @@ class PluginConfig:
             memory_cleanup_days=mcd,
             importance_threshold=thr,
             memory_kb_name=str(pick("memory_kb_name", d["memory_kb_name"])),
+            native_autodownload=bool(
+                pick("native_autodownload", d["native_autodownload"])
+            ),
             data_dir=data_dir,
         )
 
@@ -100,4 +105,5 @@ class PluginConfig:
             "memory_cleanup_days": self.memory_cleanup_days,
             "importance_threshold": self.importance_threshold,
             "memory_kb_name": self.memory_kb_name,
+            "native_autodownload": self.native_autodownload,
         }

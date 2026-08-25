@@ -58,5 +58,10 @@
     "description": "记忆向量索引使用的知识库名称",
     "type": "string",
     "default": "unified_chat_memories"
+  },
+  "native_autodownload": {
+    "description": "启动时自动下载匹配平台的原生加速库（失败自动回退纯Python）",
+    "type": "bool",
+    "default": true
   }
 }

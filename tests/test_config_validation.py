@@ -23,3 +23,13 @@ def test_to_dict_roundtrip():
     assert d["rag_kbs"] == ["kb1"]
     assert d["memory_kb_name"] == "m"
     assert "data_dir" not in d
+
+
+def test_native_autodownload_roundtrip():
+    from unified_chat.config import PluginConfig
+
+    cfg = PluginConfig.from_dict({"native_autodownload": False})
+    assert cfg.native_autodownload is False
+    assert PluginConfig.from_dict({}).native_autodownload is True
+    assert PluginConfig.from_dict({"native_autodownload": "yes"}).native_autodownload is True
+    assert "native_autodownload" in PluginConfig.from_dict({}).to_dict()
