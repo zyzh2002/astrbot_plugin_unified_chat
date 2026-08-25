@@ -32,6 +32,7 @@ class PluginLifecycle:
         self._migration_service: Any | None = None
         self._migration_tasks: list[Any] = []
         self._needs_migration = False
+        self._prefetch_task: Any | None = None
 
     async def on_load(self):
         try:
@@ -107,6 +108,15 @@ class PluginLifecycle:
             from ..services.migration_service import MigrationService
 
             self._migration_service = MigrationService(self.context, config)
+
+            try:
+                from ..native import bootstrap
+
+                self._prefetch_task = bootstrap.prefetch_async(
+                    config.native_autodownload
+                )
+            except Exception:
+                pass
         except Exception as e:  # pragma: no cover - defensive
             try:
                 from astrbot.api import logger  # type: ignore
@@ -124,6 +134,10 @@ class PluginLifecycle:
             from ..storage.database import close_engine
 
             await close_engine()
+        if self._prefetch_task is not None:
+            with contextlib.suppress(Exception):
+                self._prefetch_task.cancel()
+            self._prefetch_task = None
         self._status = "unloaded"
 
     async def handle_message(self, event: AstrMessageEvent):

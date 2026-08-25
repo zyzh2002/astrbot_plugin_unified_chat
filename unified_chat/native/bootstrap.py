@@ -6,6 +6,10 @@ startup path; all failures degrade to the pure-Python fallback.
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
+import hashlib
+import hmac
 import platform
 import sys
 from pathlib import Path
@@ -95,3 +99,123 @@ def try_load_cached(data_dir: Path) -> bool:
         except Exception:
             continue
     return False
+
+
+def cache_dir() -> Path:
+    return default_cache_dir()
+
+
+def plugin_version() -> str:
+    import re
+
+    meta = Path(__file__).resolve().parents[2] / "metadata.yaml"
+    text = meta.read_text(encoding="utf-8")
+    match = re.search(r"(?m)^version:\s*([^\s#]+)", text)
+    if not match:
+        raise ValueError("metadata.yaml has no version line")
+    return match.group(1).strip("\"'")
+
+
+def _expected_sha256(sums_text: str, asset: str) -> str | None:
+    for line in sums_text.splitlines():
+        parts = line.split(None, 1)
+        if len(parts) != 2:
+            continue
+        name = parts[1].strip().lstrip("*")
+        if name.rsplit("/", 1)[-1] == asset:
+            return parts[0].lower()
+    return None
+
+
+def _extract_native(wheel_bytes: bytes, dest: Path) -> None:
+    import io
+    import zipfile
+
+    with zipfile.ZipFile(io.BytesIO(wheel_bytes)) as zf:
+        members = [
+            name
+            for name in zf.namelist()
+            if Path(name).name.startswith("_native")
+            and name.endswith((".so", ".pyd"))
+        ]
+        if not members:
+            raise ValueError("no native extension member inside wheel")
+        payload = zf.read(members[0])
+    target = dest / Path(members[0]).name
+    dest.mkdir(parents=True, exist_ok=True)
+    tmp = target.with_suffix(target.suffix + ".tmp")
+    tmp.write_bytes(payload)
+    tmp.replace(target)
+
+
+async def _fetch(url: str) -> bytes:
+    import urllib.request
+
+    def _get() -> bytes:
+        request = urllib.request.Request(
+            url, headers={"User-Agent": "unified-chat-bootstrap"}
+        )
+        with urllib.request.urlopen(request, timeout=DOWNLOAD_TIMEOUT_S) as resp:
+            data = resp.read(MAX_WHEEL_BYTES + 1)
+        if len(data) > MAX_WHEEL_BYTES:
+            raise ValueError("asset exceeds size cap")
+        return data
+
+    return await asyncio.to_thread(_get)
+
+
+def _logger():
+    try:
+        from astrbot.api import logger  # type: ignore
+
+        return logger
+    except Exception:
+        import logging
+
+        return logging.getLogger("unified_chat")
+
+
+def _log(logger_obj, message: str) -> None:
+    with contextlib.suppress(Exception):
+        logger_obj.info(f"[unified_chat] {message}")
+
+
+async def prefetch() -> None:
+    log = _logger()
+    try:
+        version = plugin_version()
+        asset = wheel_asset_name(version)
+        if asset is None:
+            return
+        dest = cache_dir()
+        if dest.is_dir() and any(dest.glob("_native*")):
+            return
+        base = f"{RELEASE_BASE}/v{version}"
+        wheel_bytes = await _fetch(f"{base}/{asset}")
+        sums_bytes = await _fetch(f"{base}/SHA256SUMS")
+        expected = _expected_sha256(sums_bytes.decode("utf-8", "replace"), asset)
+        actual = hashlib.sha256(wheel_bytes).hexdigest()
+        if expected is None or not hmac.compare_digest(actual, expected):
+            _log(log, f"checksum mismatch for {asset}; skipping install")
+            return
+        _extract_native(wheel_bytes, dest)
+        _log(log, f"native binary cached ({asset}); restart to activate")
+    except Exception as exc:
+        _log(log, f"prefetch skipped: {exc}")
+
+
+def prefetch_async(enabled: bool) -> asyncio.Task | None:
+    """Schedule background prefetch; None when disabled or already satisfied."""
+    if not enabled:
+        return None
+    try:
+        import unified_chat._native  # noqa: F401
+
+        return None
+    except Exception:
+        pass
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return None
+    return loop.create_task(prefetch())

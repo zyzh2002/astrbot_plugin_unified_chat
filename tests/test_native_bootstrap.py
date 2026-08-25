@@ -133,3 +133,111 @@ class TestFacadeFallbackIntact:
         assert callable(chunk_text)
         assert callable(hash_dedup)
         assert callable(score_importance)
+
+
+def _make_wheel(member: str = "unified_chat/_native.cp312-abi3-x.so") -> bytes:
+    import io
+    import zipfile
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr(member, b"fake-binary-payload")
+    return buf.getvalue()
+
+
+class TestExtractAndChecksum:
+    def test_extract_native_member(self, tmp_path):
+        bootstrap._extract_native(_make_wheel(), tmp_path)
+        out = list(tmp_path.glob("_native*.so"))
+        assert len(out) == 1
+        assert out[0].read_bytes() == b"fake-binary-payload"
+
+    def test_extract_rejects_wheel_without_native(self, tmp_path):
+        with pytest.raises(ValueError, match="no native extension member"):
+            bootstrap._extract_native(_make_wheel("unified_chat/other.txt"), tmp_path)
+
+    def test_expected_sha256_found(self):
+        import hashlib
+
+        wheel = _make_wheel()
+        digest = hashlib.sha256(wheel).hexdigest()
+        asset = "astrbot_plugin_unified_chat-0.1.0-cp312-abi3-win_amd64.whl"
+        sums = f"{digest}  {asset}\n"
+        assert bootstrap._expected_sha256(sums, asset) == digest
+
+    def test_expected_sha256_handles_star_and_dirs(self):
+        import hashlib
+
+        wheel = _make_wheel()
+        digest = hashlib.sha256(wheel).hexdigest()
+        asset = "astrbot_plugin_unified_chat-0.1.0-cp312-abi3-win_amd64.whl"
+        sums = f"{digest} *dist/{asset}\n"
+        assert bootstrap._expected_sha256(sums, asset) == digest
+        assert bootstrap._expected_sha256(sums, "missing.whl") is None
+
+
+class TestPrefetch:
+    async def test_happy_path_caches_binary(self, tmp_path, monkeypatch):
+        import hashlib
+
+        wheel = _make_wheel()
+        digest = hashlib.sha256(wheel).hexdigest()
+        asset = "astrbot_plugin_unified_chat-0.1.0-cp312-abi3-win_amd64.whl"
+
+        async def fake_fetch(url):
+            if url.endswith(asset):
+                return wheel
+            return f"{digest}  {asset}\n".encode()
+
+        monkeypatch.setattr(bootstrap, "_fetch", fake_fetch)
+        monkeypatch.setattr(bootstrap, "cache_dir", lambda: tmp_path)
+        monkeypatch.setattr(bootstrap, "plugin_version", lambda: "0.1.0")
+        monkeypatch.setattr(bootstrap.platform, "machine", lambda: "AMD64")
+        monkeypatch.setattr(bootstrap.sys, "platform", "win32")
+
+        await bootstrap.prefetch()
+        assert list(tmp_path.glob("_native*"))
+
+    async def test_checksum_mismatch_skips(self, tmp_path, monkeypatch):
+        wheel = _make_wheel()
+        asset = "astrbot_plugin_unified_chat-0.1.0-cp312-abi3-win_amd64.whl"
+
+        async def fake_fetch(url):
+            if url.endswith(asset):
+                return wheel
+            return b"deadbeef  wrong\n"
+
+        monkeypatch.setattr(bootstrap, "_fetch", fake_fetch)
+        monkeypatch.setattr(bootstrap, "cache_dir", lambda: tmp_path)
+        monkeypatch.setattr(bootstrap, "plugin_version", lambda: "0.1.0")
+        monkeypatch.setattr(bootstrap.platform, "machine", lambda: "AMD64")
+        monkeypatch.setattr(bootstrap.sys, "platform", "win32")
+
+        await bootstrap.prefetch()
+        assert not list(tmp_path.glob("_native*"))
+
+    async def test_network_error_silent(self, tmp_path, monkeypatch):
+        async def boom(_url):
+            raise OSError("network down")
+
+        monkeypatch.setattr(bootstrap, "_fetch", boom)
+        monkeypatch.setattr(bootstrap, "cache_dir", lambda: tmp_path)
+        monkeypatch.setattr(bootstrap, "plugin_version", lambda: "0.1.0")
+        monkeypatch.setattr(bootstrap.platform, "machine", lambda: "AMD64")
+        monkeypatch.setattr(bootstrap.sys, "platform", "win32")
+
+        await bootstrap.prefetch()
+        assert not list(tmp_path.glob("_native*"))
+
+    async def test_prefetch_async_disabled(self):
+        assert bootstrap.prefetch_async(False) is None
+
+    async def test_prefetch_async_when_native_present(self, monkeypatch):
+        import types
+
+        monkeypatch.setitem(
+            __import__("sys").modules,
+            "unified_chat._native",
+            types.ModuleType("x"),
+        )
+        assert bootstrap.prefetch_async(True) is None
