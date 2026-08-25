@@ -117,12 +117,26 @@ def plugin_version() -> str:
 
 
 def _expected_sha256(sums_text: str, asset: str) -> str | None:
+    import re as _re
+
     for line in sums_text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        # BSD style: "SHA256 (name) = hash"
+        match = _re.fullmatch(r"SHA256\s+\((.+?)\)\s*=\s*([0-9a-fA-F]{64})", line)
+        if match:
+            if match.group(1).rsplit("/", 1)[-1] == asset:
+                return match.group(2).lower()
+            continue
+        # GNU/standard style: "<hash>  <name>" (optional leading "*")
         parts = line.split(None, 1)
         if len(parts) != 2:
             continue
         name = parts[1].strip().lstrip("*")
-        if name.rsplit("/", 1)[-1] == asset:
+        if name.rsplit("/", 1)[-1] == asset and _re.fullmatch(
+            r"[0-9a-fA-F]{64}", parts[0]
+        ):
             return parts[0].lower()
     return None
 

@@ -58,7 +58,7 @@ jobs:
               *) echo "::error::wheel version mismatch: $w"; exit 1 ;;
             esac
           done
-          cd dist && sha256sum --tag *.whl > SHA256SUMS
+          cd dist && sha256sum *.whl > SHA256SUMS
       - uses: softprops/action-gh-release@v2
         with:
           files: |

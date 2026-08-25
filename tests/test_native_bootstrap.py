@@ -241,3 +241,14 @@ class TestPrefetch:
             types.ModuleType("x"),
         )
         assert bootstrap.prefetch_async(True) is None
+
+
+class TestChecksumFormats:
+    def test_parses_bsd_tag_format(self):
+        import hashlib
+
+        wheel = _make_wheel()
+        digest = hashlib.sha256(wheel).hexdigest()
+        asset = "astrbot_plugin_unified_chat-0.1.0-cp312-abi3-win_amd64.whl"
+        sums = f"SHA256 ({asset}) = {digest}\n"
+        assert bootstrap._expected_sha256(sums, asset) == digest
