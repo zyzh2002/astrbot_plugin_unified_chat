@@ -160,5 +160,40 @@
       "type": "string"
     },
     "default": []
+  },
+  "enable_style_learning": {
+    "description": "学习深化总开关（黑话/好感度/情绪注入）",
+    "type": "bool",
+    "default": true
+  },
+  "slang_top_k": {
+    "description": "每期挖掘的黑话候选上限",
+    "type": "int",
+    "default": 15
+  },
+  "slang_min_count": {
+    "description": "候选词最低出现次数",
+    "type": "int",
+    "default": 8
+  },
+  "slang_infer_enabled": {
+    "description": "用 LLM 推断黑话含义（消耗 token）",
+    "type": "bool",
+    "default": false
+  },
+  "enable_affinity": {
+    "description": "好感度体系（按用户衰减与语气提示）",
+    "type": "bool",
+    "default": true
+  },
+  "enable_mood": {
+    "description": "情绪系统（随时间漂移并注入 prompt）",
+    "type": "bool",
+    "default": true
+  },
+  "persona_auto_suggest": {
+    "description": "定期生成人格调整建议供人工审批",
+    "type": "bool",
+    "default": false
   }
 }

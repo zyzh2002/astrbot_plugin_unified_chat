@@ -66,3 +66,29 @@ class UnifiedKV(SQLModel, table=True):
     key: str = Field(primary_key=True, max_length=255)
     value: str = Field(default="")
     updated_at: datetime = Field(default_factory=_utcnow)
+
+
+class SlangTerm(SQLModel, table=True):
+    """Group slang candidates and confirmed meanings."""
+
+    __tablename__ = "slang_terms"
+
+    id: int | None = Field(default=None, primary_key=True)
+    term: str = Field(index=True, max_length=64)
+    meaning: str = Field(default="", max_length=512)
+    umo: str = Field(index=True, default="", max_length=255)
+    status: str = Field(index=True, default="candidate", max_length=16)
+    count: int = Field(default=0)
+    created_at: datetime = Field(default_factory=_utcnow)
+
+
+class UserAffinity(SQLModel, table=True):
+    """Per-session-user affection score in [0, 100]."""
+
+    __tablename__ = "user_affinity"
+
+    id: int | None = Field(default=None, primary_key=True)
+    umo: str = Field(index=True, max_length=255)
+    user_id: str = Field(index=True, max_length=64)
+    score: float = Field(default=50.0)
+    updated_at: datetime = Field(default_factory=_utcnow, index=True)

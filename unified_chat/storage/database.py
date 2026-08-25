@@ -16,7 +16,9 @@ from .models import (  # noqa: F401 ensure tables
     LearningLog,
     Memory,
     MessageRecord,
+    SlangTerm,
     UnifiedKV,
+    UserAffinity,
 )
 
 # SQLModel shares a global metadata registry with AstrBot itself; restrict
@@ -27,6 +29,8 @@ _PLUGIN_TABLES = (
     Memory.__table__,
     LearningLog.__table__,
     UnifiedKV.__table__,
+    SlangTerm.__table__,
+    UserAffinity.__table__,
 )
 
 _engine: AsyncEngine | None = None

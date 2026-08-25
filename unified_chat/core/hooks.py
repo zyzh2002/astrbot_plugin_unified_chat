@@ -93,3 +93,29 @@ async def inject_memory_tools(event: Any, req: Any, config: Any, memory_service:
             from astrbot.api import logger  # type: ignore
 
             logger.error("[unified_chat] inject_memory_tools failed", exc_info=True)
+
+
+async def inject_learning_block(event: Any, req: Any, config: Any, services: dict) -> None:
+    """Append slang/affinity/mood context as one system message. Never raises."""
+    try:
+        from ..services.inject_composer import compose_learning_block
+
+        block = await compose_learning_block(
+            event,
+            config,
+            services.get("slang_terms", []),
+            services.get("affinity_score"),
+            services.get("mood_scalar", 0.0),
+        )
+        if not block:
+            return
+        contexts = getattr(req, "contexts", None)
+        if contexts is None:
+            contexts = []
+            req.contexts = contexts
+        contexts.append({"role": "system", "content": block})
+    except Exception:
+        with contextlib.suppress(Exception):
+            from astrbot.api import logger  # type: ignore
+
+            logger.error("[unified_chat] inject_learning_block failed", exc_info=True)

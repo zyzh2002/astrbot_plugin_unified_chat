@@ -9,7 +9,7 @@ from sqlalchemy import func, text
 from sqlmodel import select
 
 from .database import get_session
-from .models import LearningLog, Memory, MessageRecord
+from .models import LearningLog, Memory, MessageRecord, SlangTerm, UserAffinity
 
 _FTS_DDL = (
     "CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5("
@@ -348,3 +348,125 @@ class MessageScanRepo:
                 else:
                     result.append((str(umo), 0.0))
             return result
+
+
+class SlangRepo:
+    """Persistence for slang candidates/meanings."""
+
+    @staticmethod
+    async def add(term_row: SlangTerm) -> SlangTerm:
+        async with get_session() as session:
+            session.add(term_row)
+            await session.commit()
+            await session.refresh(term_row)
+            return term_row
+
+    @staticmethod
+    async def exists_term(term: str) -> bool:
+        async with get_session() as session:
+            result = await session.exec(
+                select(SlangTerm.id).where(SlangTerm.term == term).limit(1)
+            )
+            return result.first() is not None
+
+    @staticmethod
+    async def list_by_status(status: str, limit: int = 50) -> list[SlangTerm]:
+        async with get_session() as session:
+            rows = (
+                await session.exec(
+                    select(SlangTerm)
+                    .where(SlangTerm.status == status)
+                    .order_by(SlangTerm.count.desc())
+                    .limit(limit)
+                )
+            ).all()
+            return list(rows)
+
+    @staticmethod
+    async def confirmed_all() -> list[SlangTerm]:
+        async with get_session() as session:
+            rows = (
+                await session.exec(
+                    select(SlangTerm).where(SlangTerm.status == "confirmed")
+                )
+            ).all()
+            return list(rows)
+
+    @staticmethod
+    async def set_status(term_id: int, status: str) -> None:
+        async with get_session() as session:
+            row = await session.get(SlangTerm, term_id)
+            if row is not None:
+                row.status = status
+                session.add(row)
+                await session.commit()
+
+    @staticmethod
+    async def set_meaning(term_id: int, meaning: str) -> None:
+        async with get_session() as session:
+            row = await session.get(SlangTerm, term_id)
+            if row is not None:
+                row.meaning = meaning[:512]
+                session.add(row)
+                await session.commit()
+
+
+class AffinityRepo:
+    """Per-session-user affinity scores."""
+
+    BASELINE = 50.0
+
+    @staticmethod
+    async def bump(umo: str, user_id: str, delta: float = 1.0) -> float:
+        async with get_session() as session:
+            rows = (
+                await session.exec(
+                    select(UserAffinity)
+                    .where(UserAffinity.umo == umo)
+                    .where(UserAffinity.user_id == user_id)
+                    .limit(1)
+                )
+            ).all()
+            row = rows[0] if rows else UserAffinity(umo=umo, user_id=user_id)
+            row.score = max(0.0, min(100.0, float(row.score) + delta))
+            session.add(row)
+            await session.commit()
+            await session.refresh(row)
+            return float(row.score)
+
+    @staticmethod
+    async def all_rows(limit: int = 500) -> list[UserAffinity]:
+        async with get_session() as session:
+            rows = (await session.exec(select(UserAffinity).limit(limit))).all()
+            return list(rows)
+
+    @staticmethod
+    async def save_score(row: UserAffinity) -> None:
+        async with get_session() as session:
+            session.add(row)
+            await session.commit()
+
+    @staticmethod
+    def band(score: float) -> str:
+        if score > 70:
+            return "warm"
+        if score < 30:
+            return "cool"
+        return "neutral"
+
+
+class AffinityLookupRepo:
+    """Single-row affinity reads."""
+
+    @staticmethod
+    async def get_score(umo: str, user_id: str) -> float | None:
+        async with get_session() as session:
+            rows = (
+                await session.exec(
+                    select(UserAffinity)
+                    .where(UserAffinity.umo == umo)
+                    .where(UserAffinity.user_id == user_id)
+                    .limit(1)
+                )
+            ).all()
+            return float(rows[0].score) if rows else None

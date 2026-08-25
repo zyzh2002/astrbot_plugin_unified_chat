@@ -34,6 +34,13 @@ DEFAULTS = {
     "blacklist_users": [],
     "trigger_keywords": [],
     "blocked_keywords": [],
+    "enable_style_learning": True,
+    "slang_top_k": 15,
+    "slang_min_count": 8,
+    "slang_infer_enabled": False,
+    "enable_affinity": True,
+    "enable_mood": True,
+    "persona_auto_suggest": False,
 }
 
 
@@ -68,6 +75,13 @@ class PluginConfig:
     blacklist_users: list[str] = field(default_factory=list)
     trigger_keywords: list[str] = field(default_factory=list)
     blocked_keywords: list[str] = field(default_factory=list)
+    enable_style_learning: bool = True
+    slang_top_k: int = 15
+    slang_min_count: int = 8
+    slang_infer_enabled: bool = False
+    enable_affinity: bool = True
+    enable_mood: bool = True
+    persona_auto_suggest: bool = False
     data_dir: str = ""
 
     @classmethod
@@ -144,6 +158,19 @@ class PluginConfig:
                     else []
                 )
             ],
+            enable_style_learning=bool(
+                pick("enable_style_learning", d["enable_style_learning"])
+            ),
+            slang_top_k=int(pick("slang_top_k", d["slang_top_k"])),
+            slang_min_count=int(pick("slang_min_count", d["slang_min_count"])),
+            slang_infer_enabled=bool(
+                pick("slang_infer_enabled", d["slang_infer_enabled"])
+            ),
+            enable_affinity=bool(pick("enable_affinity", d["enable_affinity"])),
+            enable_mood=bool(pick("enable_mood", d["enable_mood"])),
+            persona_auto_suggest=bool(
+                pick("persona_auto_suggest", d["persona_auto_suggest"])
+            ),
             native_autodownload=bool(
                 pick("native_autodownload", d["native_autodownload"])
             ),
@@ -208,4 +235,11 @@ class PluginConfig:
             "blacklist_users": self.blacklist_users,
             "trigger_keywords": self.trigger_keywords,
             "blocked_keywords": self.blocked_keywords,
+            "enable_style_learning": self.enable_style_learning,
+            "slang_top_k": self.slang_top_k,
+            "slang_min_count": self.slang_min_count,
+            "slang_infer_enabled": self.slang_infer_enabled,
+            "enable_affinity": self.enable_affinity,
+            "enable_mood": self.enable_mood,
+            "persona_auto_suggest": self.persona_auto_suggest,
         }

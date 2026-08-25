@@ -56,6 +56,15 @@ class MessagePipeline:
         if self.memory_service is not None:
             await self.memory_service.maybe_store(event, sender_id)
             await self.memory_service.maybe_summarize(event)
+        if getattr(self.config, "enable_affinity", True):
+            try:
+                from ..storage import repo as repos
+
+                umo = getattr(event, "unified_msg_origin", "") or ""
+                if umo:
+                    await repos.AffinityRepo.bump(umo, sender_id or "anon")
+            except Exception:
+                pass
         if self.learning_service is not None:
             await self.learning_service.maybe_learn(event, sender_id)
 

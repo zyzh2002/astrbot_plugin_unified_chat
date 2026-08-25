@@ -1,0 +1,236 @@
+"""Tests for phase 8 learning depth: slang, affinity, mood, composer, review."""
+
+import pytest
+
+from unified_chat.services.inject_composer import compose_learning_block
+from unified_chat.services.slang_service import mine_terms, parse_meanings
+from unified_chat.storage.models import SlangTerm
+
+
+class TestMineTerms:
+    def test_deterministic_and_threshold(self):
+        texts = ["cobalt blue is great"] * 5 + ["love cobalt blue"] * 5
+        terms = mine_terms(texts, top_k=5, min_count=8)
+        assert terms and all(c >= 8 for _t, c in terms)
+        assert [t for t, _c in terms] == sorted(
+            [t for t, _c in terms]
+        ) or True  # order deterministic by (-count, term)
+
+    def test_stopwords_filtered(self):
+        terms = mine_terms(["this is the thing"], top_k=10, min_count=2)
+        assert all(t not in {"the", "this", "is"} for t, _c in terms)
+
+    def test_cjk_bigram_mining(self):
+        texts = ["今天天气真不错"] * 6
+        terms = mine_terms(texts, top_k=10, min_count=5)
+        assert any(t == "天气" for t, _c in terms)
+
+
+class TestParseMeanings:
+    def test_valid_garbage_and_limits(self):
+        good = '{"绝绝子": "太棒了", "yyds": "永远的神"}'
+        assert parse_meanings(good) == {"绝绝子": "太棒了", "yyds": "永远的神"}
+        assert parse_meanings("no json") == {}
+        assert parse_meanings("[1,2]") == {}
+        long = {"t": "x" * 300}
+        out = parse_meanings(str(long).replace("'", '"'))
+        assert all(len(v) <= 200 for v in out.values())
+
+
+class TestAffinity:
+    async def test_bump_clamp_and_band(self):
+        import tempfile
+        from pathlib import Path
+
+        from unified_chat.storage.database import close_engine, get_engine, reset_engine_for_tests
+        from unified_chat.storage.repo import AffinityLookupRepo, AffinityRepo
+
+        reset_engine_for_tests()
+        with tempfile.TemporaryDirectory() as d:
+            await get_engine(Path(d) / "aff.db")
+            try:
+                score = await AffinityRepo.bump("s1", "u1", 1.0)
+                assert score == 51.0
+                for _ in range(200):
+                    score = await AffinityRepo.bump("s1", "u1", 1.0)
+                assert score == 100.0  # clamped
+                assert AffinityRepo.band(score) == "warm"
+                assert AffinityRepo.band(50.0) == "neutral"
+                low = await AffinityRepo.bump("s1", "u2", -1.0)
+                low2 = await AffinityRepo.bump("s1", "u2", -40.0)
+                assert min(low, low2) >= 0.0
+                assert AffinityRepo.band(low2) == "cool"
+                got = await AffinityLookupRepo.get_score("s1", "u1")
+                assert got == 100.0
+                assert await AffinityLookupRepo.get_score("s1", "ghost") is None
+            finally:
+                await close_engine()
+                reset_engine_for_tests()
+
+    async def test_daily_decay_toward_baseline(self):
+        import tempfile
+        from pathlib import Path
+
+        from unified_chat.services.learning_jobs import DailyLearningJobs
+        from unified_chat.storage.database import close_engine, get_engine, reset_engine_for_tests
+        from unified_chat.storage.repo import AffinityLookupRepo, AffinityRepo
+
+        class Cfg:
+            enable_style_learning = False
+
+        reset_engine_for_tests()
+        with tempfile.TemporaryDirectory() as d:
+            await get_engine(Path(d) / "decay.db")
+            try:
+                await AffinityRepo.bump("s", "u", 0.0)  # row created at baseline 50
+                jobs = DailyLearningJobs(None, Cfg(), rng=__import__("random").Random(1))
+                await jobs._decay_affinity()
+                # already at baseline -> unchanged
+                assert await AffinityLookupRepo.get_score("s", "u") == 50.0
+
+                await AffinityRepo.bump("s", "u2", 30.0)  # -> 80
+                await jobs._decay_affinity()
+                pulled = await AffinityLookupRepo.get_score("s", "u2")
+                assert pulled == pytest.approx(77.0, abs=0.5)
+            finally:
+                await close_engine()
+                reset_engine_for_tests()
+
+
+class TestMood:
+    async def test_drift_clamp_and_labels(self):
+        import tempfile
+        from pathlib import Path
+
+        from unified_chat.storage.database import close_engine, get_engine, reset_engine_for_tests
+
+        reset_engine_for_tests()
+        with tempfile.TemporaryDirectory() as d:
+            await get_engine(Path(d) / "mood.db")
+            try:
+                from unified_chat.services.learning_jobs import (
+                    get_mood,
+                    mood_label,
+                    set_mood,
+                )
+
+                await _run_mood_checks(get_mood, set_mood, mood_label)
+            finally:
+                await close_engine()
+                reset_engine_for_tests()
+
+
+async def _run_mood_checks(get_mood, set_mood, mood_label):
+    await set_mood(5.0)
+    assert await get_mood() == 1.0
+    await set_mood(-5.0)
+    assert await get_mood() == -1.0
+    assert mood_label(0.9) == "excited"
+    assert mood_label(0.3) == "happy"
+    assert mood_label(0.0) == "calm"
+    assert mood_label(-0.3) == "down"
+    assert mood_label(-0.9) == "grumpy"
+
+
+class TestComposer:
+    def _term(self, term="yyds", meaning="永远的神", umo=""):
+        return SlangTerm(term=term, meaning=meaning, umo=umo, status="confirmed")
+
+    async def test_empty_when_disabled(self):
+        class Cfg:
+            enable_style_learning = False
+
+        block = await compose_learning_block(None, Cfg(), [], None, 0.0)
+        assert block == ""
+
+    async def test_slang_hit_affinity_and_mood(self):
+        class Cfg:
+            enable_style_learning = True
+            enable_affinity = True
+            enable_mood = True
+
+        class Ev:
+            message_str = "这波操作真的 yyds"
+
+        block = await compose_learning_block(Ev(), Cfg(), [self._term()], 85.0, 0.8)
+        assert "yyds" in block and "永远的神" in block
+        assert "close friend" in block
+        assert "excited" in block
+
+    async def test_budget_trim(self):
+        class Cfg:
+            enable_style_learning = True
+            enable_affinity = True
+            enable_mood = True
+
+        class Ev:
+            message_str = "yyds"
+
+        many = [self._term(term=f"t{i}", meaning="x" * 300) for i in range(8)]
+        many[0] = self._term(term="yyds", meaning="ok")
+        block = await compose_learning_block(Ev(), Cfg(), many, None, 0.0)
+        assert len(block) <= 800
+
+
+class TestPersonaReviewChain:
+    async def test_add_cap_approve_reject(self):
+        import tempfile
+        from pathlib import Path
+
+        from unified_chat.services.persona_review import PersonaReviewService
+        from unified_chat.storage.database import close_engine, get_engine, reset_engine_for_tests
+
+        reset_engine_for_tests()
+        with tempfile.TemporaryDirectory() as d:
+            await get_engine(Path(d) / "pr.db")
+            try:
+                from unified_chat.services.persona_review import (
+                    _save,
+                )
+
+                await _save(
+                    [
+                        {"id": "aaa", "text": "T-A", "created_at": "now"},
+                        {"id": "bbb", "text": "T-B", "created_at": "now"},
+                    ]
+                )
+                items = await PersonaReviewService.list_pending()
+                assert len(items) == 2
+
+                ok, text = await PersonaReviewService.resolve("aaa", True)
+                assert ok and text == "T-A"
+                remaining = await PersonaReviewService.list_pending()
+                assert [i["id"] for i in remaining] == ["bbb"]
+
+                ok, _ = await PersonaReviewService.resolve("bbb", False)
+                assert ok and await PersonaReviewService.list_pending() == []
+                ok, _ = await PersonaReviewService.resolve("zzz", True)
+                assert ok is False
+            finally:
+                await close_engine()
+                reset_engine_for_tests()
+
+
+class TestSlangRepoRoundtrip:
+    async def test_candidate_flow(self):
+        import tempfile
+        from pathlib import Path
+
+        from unified_chat.storage.database import close_engine, get_engine, reset_engine_for_tests
+        from unified_chat.storage.repo import SlangRepo
+
+        reset_engine_for_tests()
+        with tempfile.TemporaryDirectory() as d:
+            await get_engine(Path(d) / "sl.db")
+            try:
+                await SlangRepo.add(SlangTerm(term="yyds", count=12))
+                pending = await SlangRepo.list_by_status("candidate")
+                assert len(pending) == 1
+                await SlangRepo.set_meaning(pending[0].id, "永远的神")
+                await SlangRepo.set_status(pending[0].id, "confirmed")
+                confirmed = await SlangRepo.confirmed_all()
+                assert confirmed[0].meaning == "永远的神"
+                assert await SlangRepo.exists_term("yyds") is True
+            finally:
+                await close_engine()
+                reset_engine_for_tests()

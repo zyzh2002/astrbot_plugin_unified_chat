@@ -78,3 +78,22 @@ class UnifiedChatPlugin(Star):
             return
         result = await self._lifecycle.umem(event, action.strip(), arg.strip())
         yield event.plain_result(result)
+
+
+    @filter.command("uslang")
+    async def uslang(self, event: AstrMessageEvent, action: str = "", arg: str = ""):
+        """Slang management: list/confirm/deny."""
+        if not self._initialized:
+            yield event.plain_result("[uslang] Plugin not initialized")
+            return
+        result = await self._lifecycle.uslang(action.strip(), arg.strip())
+        yield event.plain_result(result)
+
+    @filter.command("upersona")
+    async def upersona(self, event: AstrMessageEvent, action: str = "", arg: str = ""):
+        """Persona suggestion review chain."""
+        if not self._initialized:
+            yield event.plain_result("[upersona] Plugin not initialized")
+            return
+        result = await self._lifecycle.upersona(action.strip(), arg.strip())
+        yield event.plain_result(result)

@@ -53,3 +53,22 @@ def test_humanize_keys_roundtrip():
     assert PluginConfig.from_dict({}).humanize_enable is False
     dump = cfg.to_dict()
     assert "blacklist_users" in dump and "humanize_enable" in dump
+
+
+def test_phase8_learning_keys_roundtrip():
+    from unified_chat.config import PluginConfig
+
+    cfg = PluginConfig.from_dict(
+        {
+            "enable_style_learning": False,
+            "slang_top_k": 20,
+            "enable_affinity": False,
+            "persona_auto_suggest": True,
+        }
+    )
+    assert cfg.enable_style_learning is False
+    assert cfg.slang_top_k == 20
+    assert cfg.enable_affinity is False
+    assert cfg.persona_auto_suggest is True
+    assert PluginConfig.from_dict({}).enable_style_learning is True
+    assert PluginConfig.from_dict({}).persona_auto_suggest is False

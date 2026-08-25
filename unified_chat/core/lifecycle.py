@@ -37,6 +37,7 @@ class PluginLifecycle:
         self._humanize: Any | None = None
         self._pending_merge: dict[str, str] = {}
         self._proactive: Any | None = None
+        self._learning_jobs: Any | None = None
 
     async def on_load(self):
         try:
@@ -102,10 +103,14 @@ class PluginLifecycle:
 
             self._proactive = ProactiveService(self.context, config)
 
+            from ..services.learning_jobs import DailyLearningJobs
             from .cron import MemoryCleanupCron
 
+            self._learning_jobs = DailyLearningJobs(self.context, config)
             self._cron = MemoryCleanupCron(
-                self._memory_service, backup_service=self._backup_service
+                self._memory_service,
+                backup_service=self._backup_service,
+                learning_jobs=self._learning_jobs,
             )
             self._cron.start()
             if config.humanize_proactive:
@@ -245,11 +250,49 @@ class PluginLifecycle:
                 from .hooks import inject_memories
 
                 await inject_memories(event, req, self._config, self._memory_service)
+                await self._inject_learning_block(event, req)
             except Exception:
                 with contextlib.suppress(Exception):
                     from astrbot.api import logger  # type: ignore
 
                     logger.error("[unified_chat] inject_memories failed", exc_info=True)
+
+    async def _inject_learning_block(self, event: AstrMessageEvent, req) -> None:
+        if not getattr(self._config, "enable_style_learning", True):
+            return
+        try:
+            from ..services.learning_jobs import get_mood
+            from ..storage import repo as repos
+            from .hooks import inject_learning_block
+
+            umo = getattr(event, "unified_msg_origin", "") or ""
+            sender = ""
+            with contextlib.suppress(Exception):
+                sender = str(event.get_sender_id() or "")
+            slang_terms = [
+                t
+                for t in await repos.SlangRepo.confirmed_all()
+                if (t.umo or "") in ("", umo)
+            ][:100]
+            affinity = None
+            if getattr(self._config, "enable_affinity", True) and umo and sender:
+                affinity = await repos.AffinityLookupRepo.get_score(umo, sender)
+            mood = await get_mood() if self._config else 0.0
+            await inject_learning_block(
+                event,
+                req,
+                self._config,
+                {
+                    "slang_terms": slang_terms,
+                    "affinity_score": affinity,
+                    "mood_scalar": mood,
+                },
+            )
+        except Exception:
+            with contextlib.suppress(Exception):
+                from astrbot.api import logger  # type: ignore
+
+                logger.error("[unified_chat] learning block failed", exc_info=True)
 
     async def umem(self, event: AstrMessageEvent, action: str = "", arg: str = "") -> str:
         """Handle /umem subcommands. Returns plain text reply."""
@@ -365,3 +408,60 @@ class PluginLifecycle:
                 from astrbot.api import logger  # type: ignore
 
                 logger.error(f"[unified_chat] migration task failed: {exc}")
+
+    async def uslang(self, action: str = "", arg: str = "") -> str:
+        """Handle /uslang subcommands."""
+        from ..storage import repo as repos
+
+        action = (action or "").strip().lower()
+        arg = (arg or "").strip()
+        if action in ("", "help"):
+            return "[uslang] Usage: list | confirm <id> | deny <id>"
+        try:
+            if action == "list":
+                pending = await repos.SlangRepo.list_by_status("candidate", limit=15)
+                confirmed = await repos.SlangRepo.list_by_status("confirmed", limit=15)
+                pl = "\n".join(
+                    f"[{t.id}] {t.term} (x{t.count}) {t.meaning[:40]}" for t in pending
+                )
+                cl = "\n".join(
+                    f"[{t.id}] {t.term}: {t.meaning[:40]}" for t in confirmed
+                )
+                return (
+                    f"[uslang] candidates:\n{pl or '(none)'}"
+                    f"\nconfirmed:\n{cl or '(none)'}"
+                )
+            if action in ("confirm", "deny") and arg.isdigit():
+                status = "confirmed" if action == "confirm" else "denied"
+                await repos.SlangRepo.set_status(int(arg), status)
+                return f"[uslang] term {arg} -> {status}"
+            return "[uslang] unknown action"
+        except Exception as exc:
+            return f"[uslang] error: {exc}"
+
+    async def upersona(self, action: str = "", arg: str = "") -> str:
+        """Handle /upersona review chain."""
+        from ..services.persona_review import PersonaReviewService
+
+        action = (action or "").strip().lower()
+        arg = (arg or "").strip()
+        try:
+            if action in ("", "list"):
+                items = await PersonaReviewService.list_pending()
+                if not items:
+                    return "[upersona] no pending suggestions"
+                lines = "\n".join(
+                    f"[{i['id']}] {i['created_at']} {i['text'][:80]}" for i in items
+                )
+                return f"[upersona] pending:\n{lines}\napprove <id> returns full text."
+            if action == "approve" and arg:
+                ok, text = await PersonaReviewService.resolve(arg, True)
+                if not ok:
+                    return "[upersona] id not found"
+                return f"[upersona] approved; paste into persona editor:\n{text}"
+            if action == "reject" and arg:
+                ok, _ = await PersonaReviewService.resolve(arg, False)
+                return "[upersona] rejected" if ok else "[upersona] id not found"
+            return "[upersona] Usage: list | approve <id> | reject <id>"
+        except Exception as exc:
+            return f"[upersona] error: {exc}"
