@@ -64,4 +64,20 @@
     "type": "bool",
     "default": true
   }
+  },
+  "memory_session_isolation": {
+    "description": "记忆按会话隔离（关闭后全局共享）",
+    "type": "bool",
+    "default": true
+  },
+  "summary_batch_size": {
+    "description": "每 N 条消息触发一次 LLM 记忆总结（0 关闭）",
+    "type": "int",
+    "default": 10
+  },
+  "backup_keep_last": {
+    "description": "数据库备份保留份数",
+    "type": "int",
+    "default": 10
+  }
 }

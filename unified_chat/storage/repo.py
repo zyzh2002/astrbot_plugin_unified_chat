@@ -2,13 +2,24 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
 
-from sqlalchemy import func
+from sqlalchemy import func, text
 from sqlmodel import select
 
 from .database import get_session
 from .models import LearningLog, Memory, MessageRecord
+
+_FTS_DDL = (
+    "CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5("
+    "memory_id UNINDEXED, content, session_id UNINDEXED)"
+)
+
+
+def _fts_match_expr(query: str) -> str:
+    tokens = re.findall(r"\w+", query)[:8]
+    return " OR ".join(f'"{token}"' for token in tokens)
 
 
 class MessageRepo:
@@ -91,6 +102,8 @@ class MemoryRepo:
     async def delete_by_ids(ids: list[int]) -> int:
         if not ids:
             return 0
+        for mid in ids:
+            await MemoryFts.index_remove(mid)
         async with get_session() as session:
             rows = (
                 await session.exec(
@@ -167,3 +180,79 @@ class LearningLogRepo:
                 select(func.count()).select_from(LearningLog).where(LearningLog.stage == stage)
             )
             return int(result.one())
+
+
+class MemoryFts:
+    """Best-effort FTS5 sparse index over memory contents."""
+
+    @staticmethod
+    async def _ensure_table(session) -> None:
+        await session.execute(text(_FTS_DDL))
+
+    @staticmethod
+    async def index_add(memory_id: int | None, content: str, session_id: str) -> None:
+        if memory_id is None or not content.strip():
+            return
+        try:
+            async with get_session() as session:
+                await MemoryFts._ensure_table(session)
+                await session.execute(
+                    text(
+                        "INSERT INTO memory_fts(memory_id, content, session_id) "
+                        "VALUES (:mid, :content, :sid)"
+                    ),
+                    {"mid": int(memory_id), "content": content, "sid": session_id or ""},
+                )
+                await session.commit()
+        except Exception:
+            pass  # sparse index is best-effort; keyword fallback remains
+
+    @staticmethod
+    async def index_remove(memory_id: int) -> None:
+        try:
+            async with get_session() as session:
+                await MemoryFts._ensure_table(session)
+                await session.execute(
+                    text("DELETE FROM memory_fts WHERE memory_id = :mid"),
+                    {"mid": int(memory_id)},
+                )
+                await session.commit()
+        except Exception:
+            pass
+
+    @staticmethod
+    async def search(query: str, limit: int = 10) -> list[tuple[int, float]]:
+        """Return (memory_id, bm25_rank) hits, best first. Never raises."""
+        if not query.strip():
+            return []
+        expr = _fts_match_expr(query)
+        if not expr:
+            return []
+        try:
+            async with get_session() as session:
+                await MemoryFts._ensure_table(session)
+                result = await session.execute(
+                    text(
+                        "SELECT memory_id, bm25(memory_fts) FROM memory_fts "
+                        "WHERE memory_fts MATCH :expr ORDER BY rank LIMIT :lim"
+                    ),
+                    {"expr": expr, "lim": int(limit)},
+                )
+                rows = result.fetchall()
+            return [(int(row[0]), float(row[1])) for row in rows]
+        except Exception:
+            return []
+
+
+class MemoryHybridRepo:
+    """Read-side helpers spanning multiple sparse sources."""
+
+    @staticmethod
+    async def get_by_ids(ids: list[int]) -> list[Memory]:
+        if not ids:
+            return []
+        async with get_session() as session:
+            rows = (
+                await session.exec(select(Memory).where(Memory.id.in_(ids)))
+            ).all()
+            return list(rows)

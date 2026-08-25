@@ -10,6 +10,8 @@ from ..native import score_importance
 from ..storage import repo as repos
 from ..storage.models import Memory
 from .chat_service import ChatService
+from .memory_classifier import classify_memory
+from .memory_ttls import ttl_for
 
 
 class MemoryService:
@@ -74,14 +76,26 @@ class MemoryService:
             text = event.message_str
             existing = await repos.MemoryRepo.list_all()
             importance = self.compute_importance(text, sender_id, existing)
+            mtype = classify_memory(text)
+            isolation = getattr(self.config, "memory_session_isolation", True)
+            session_id = (
+                (getattr(event, "unified_msg_origin", "") or "")
+                if isolation
+                else ""
+            )
+            expires_at = datetime.now(UTC) + timedelta(days=ttl_for(mtype))
             mem = await repos.MemoryRepo.add(
                 Memory(
                     content=text,
                     importance=importance,
                     source=sender_id,
                     dedup_hash=ChatService.hash_of(text),
+                    memory_type=mtype,
+                    session_id=session_id,
+                    expires_at=expires_at,
                 )
             )
+            await repos.MemoryFts.index_add(mem.id, text, session_id)
             if importance >= self.config.importance_threshold and self._kb_helper is not None:
                 with contextlib.suppress(Exception):
                     doc = await self._kb_helper.upload_document(
@@ -95,7 +109,7 @@ class MemoryService:
         except Exception:
             self._log_error("maybe_store")
 
-    async def retrieve(self, query: str) -> str:
+    async def retrieve(self, query: str, session_id: str | None = None) -> str:
         kb_manager = getattr(self.context, "kb_manager", None)
         if self._kb_helper is not None and kb_manager is not None:
             with contextlib.suppress(Exception):
@@ -107,11 +121,40 @@ class MemoryService:
                 )
                 if result and isinstance(result, dict) and result.get("context_text"):
                     return str(result["context_text"])
-        with contextlib.suppress(Exception):
-            hits = await repos.MemoryRepo.search_by_keyword(query, limit=5)
-            if hits:
-                return "\n".join(f"- {m.content}" for m in hits)
+        hits = await self.retrieve_hybrid(query, session_id=session_id)
+        if hits:
+            return "\n".join(f"- {m.content}" for m in hits)
         return ""
+
+    async def retrieve_hybrid(
+        self, query: str, session_id: str | None = None, top_k: int = 5
+    ) -> list[Memory]:
+        """RRF-fuse sparse sources (FTS5 + LIKE keyword); never raises."""
+        scores: dict[int, float] = {}
+        try:
+            fts_hits = await repos.MemoryFts.search(query, limit=10)
+        except Exception:
+            fts_hits = []
+        try:
+            kw_rows = await repos.MemoryRepo.search_by_keyword(query, limit=10)
+        except Exception:
+            kw_rows = []
+
+        for source in (
+            [(mid, pos) for pos, (mid, _rank) in enumerate(fts_hits)],
+            [(m.id, pos) for pos, m in enumerate(kw_rows)],
+        ):
+            for mid, position in source:
+                if mid is None:
+                    continue
+                scores[mid] = scores.get(mid, 0.0) + 1.0 / (60.0 + position + 1)
+        if not scores:
+            return []
+        rows = await repos.MemoryHybridRepo.get_by_ids(list(scores))
+        if self.config.memory_session_isolation and session_id is not None:
+            rows = [m for m in rows if (m.session_id or "") in ("", session_id)]
+        rows.sort(key=lambda m: (-scores.get(m.id, 0.0), -m.reinforce_count, m.id))
+        return rows[:top_k]
 
     async def delete_expired_memories(self) -> int:
         cutoff = datetime.now(UTC) - timedelta(days=self.config.memory_cleanup_days)
@@ -120,6 +163,8 @@ class MemoryService:
             if m.kb_doc_id and self._kb_helper is not None:
                 with contextlib.suppress(Exception):
                     await self._kb_helper.delete_document(m.kb_doc_id)
+            if m.id is not None:
+                await repos.MemoryFts.index_remove(m.id)
         return await repos.MemoryRepo.delete_by_ids([m.id for m in expired if m.id is not None])
 
     @staticmethod

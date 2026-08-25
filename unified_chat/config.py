@@ -17,6 +17,9 @@ DEFAULTS = {
     "importance_threshold": 0.3,
     "memory_kb_name": "unified_chat_memories",
     "native_autodownload": True,
+    "memory_session_isolation": True,
+    "summary_batch_size": 10,
+    "backup_keep_last": 10,
 }
 
 
@@ -34,6 +37,9 @@ class PluginConfig:
     importance_threshold: float = 0.3
     memory_kb_name: str = "unified_chat_memories"
     native_autodownload: bool = True
+    memory_session_isolation: bool = True
+    summary_batch_size: int = 10
+    backup_keep_last: int = 10
     data_dir: str = ""
 
     @classmethod
@@ -89,6 +95,11 @@ class PluginConfig:
             native_autodownload=bool(
                 pick("native_autodownload", d["native_autodownload"])
             ),
+            memory_session_isolation=bool(
+                pick("memory_session_isolation", d["memory_session_isolation"])
+            ),
+            summary_batch_size=int(pick("summary_batch_size", d["summary_batch_size"])),
+            backup_keep_last=int(pick("backup_keep_last", d["backup_keep_last"])),
             data_dir=data_dir,
         )
 
@@ -106,4 +117,7 @@ class PluginConfig:
             "importance_threshold": self.importance_threshold,
             "memory_kb_name": self.memory_kb_name,
             "native_autodownload": self.native_autodownload,
+            "memory_session_isolation": self.memory_session_isolation,
+            "summary_batch_size": self.summary_batch_size,
+            "backup_keep_last": self.backup_keep_last,
         }
