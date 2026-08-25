@@ -63,3 +63,73 @@ class TestWheelAssetName:
     def test_unsupported_returns_none(self, fake_platform):
         fake_platform("freebsd", "amd64")
         assert bootstrap.wheel_asset_name("0.1.0") is None
+
+
+class TestTryLoadCached:
+    def _write_stub(self, monkeypatch, calls):
+        import types
+
+        def fake_import(path):
+            calls.append(path)
+            mod = types.ModuleType("stubmod")
+            for fn in ("chunk_text", "hash_dedup", "score_importance"):
+                setattr(mod, fn, lambda *a, _f=fn: _f)
+            monkeypatch.setitem(
+                __import__("sys").modules, "unified_chat._native", mod
+            )
+            monkeypatch.setattr(bootstrap, "_bind_facade", lambda mod: None)
+            return mod
+
+        return fake_import
+
+    def test_loads_existing_binary(self, tmp_path, monkeypatch):
+        calls = []
+        monkeypatch.setattr(
+            bootstrap, "_import_extension", self._write_stub(monkeypatch, calls)
+        )
+        native = tmp_path / "native"
+        native.mkdir()
+        (native / "_native.cp312-abi3-win_amd64.pyd").write_bytes(b"x")
+        assert bootstrap.try_load_cached(tmp_path) is True
+        assert len(calls) == 1
+
+    def test_missing_dir_returns_false(self, tmp_path, monkeypatch):
+        def no_call(_path):
+            raise AssertionError("should not be called")
+
+        monkeypatch.setattr(bootstrap, "_import_extension", no_call)
+        assert bootstrap.try_load_cached(tmp_path / "nope") is False
+
+    def test_corrupt_binary_falls_through(self, tmp_path, monkeypatch):
+        def boom(_path):
+            raise ImportError("bad magic")
+
+        monkeypatch.setattr(bootstrap, "_import_extension", boom)
+        native = tmp_path / "native"
+        native.mkdir()
+        (native / "_native_broken.pyd").write_bytes(b"garbage")
+        assert bootstrap.try_load_cached(tmp_path) is False
+
+    def test_prefers_so_then_pyd(self, tmp_path, monkeypatch):
+        seen = []
+
+        def rec(path):
+            seen.append(path.name)
+            raise ImportError("stop at first")
+
+        monkeypatch.setattr(bootstrap, "_import_extension", rec)
+        native = tmp_path / "native"
+        native.mkdir()
+        (native / "_native_zzz.pyd").write_bytes(b"x")
+        (native / "_native_aaa.so").write_bytes(b"x")
+        bootstrap.try_load_cached(tmp_path)
+        assert seen[0] == "_native_aaa.so"
+
+
+class TestFacadeFallbackIntact:
+    def test_fallback_functions_still_importable(self):
+        from unified_chat.native import chunk_text, hash_dedup, score_importance
+
+        assert callable(chunk_text)
+        assert callable(hash_dedup)
+        assert callable(score_importance)

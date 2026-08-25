@@ -44,3 +44,54 @@ def wheel_asset_name(version: str) -> str | None:
         "macosx_arm64": "macosx_11_0_arm64",
     }[key]
     return f"astrbot_plugin_unified_chat-{version}-cp312-abi3-{tag}.whl"
+
+FACADE_FUNCTIONS = ("chunk_text", "hash_dedup", "score_importance")
+
+
+def default_cache_dir() -> Path:
+    from ..utils.path import resolve_data_dir
+
+    return resolve_data_dir(None, None) / "native"
+
+
+def _import_extension(path: Path) -> None:
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("unified_chat._native", str(path))
+    if spec is None or spec.loader is None:
+        raise ImportError(f"cannot build import spec for {path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["unified_chat._native"] = module
+    try:
+        spec.loader.exec_module(module)
+    except Exception:
+        sys.modules.pop("unified_chat._native", None)
+        raise
+    _bind_facade(module)
+
+
+def _bind_facade(module) -> None:
+    facade = sys.modules.get("unified_chat.native")
+    if facade is None:
+        return
+    for fn_name in FACADE_FUNCTIONS:
+        fn = getattr(module, fn_name, None)
+        if callable(fn):
+            setattr(facade, fn_name, fn)
+
+
+def try_load_cached(data_dir: Path) -> bool:
+    """Load a previously prefetched binary; True on success."""
+    native_dir = Path(data_dir) / "native"
+    if not native_dir.is_dir():
+        return False
+    candidates = sorted(native_dir.glob("_native*.so")) + sorted(
+        native_dir.glob("_native*.pyd")
+    )
+    for path in candidates:
+        try:
+            _import_extension(path)
+            return True
+        except Exception:
+            continue
+    return False
