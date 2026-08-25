@@ -71,7 +71,6 @@ def _plain_text(result) -> str:
 
 @pytest.mark.asyncio
 async def test_plugin_lifecycle_in_real_astrbot(tmp_path):
-    sys.path.insert(0, "/AstrBot")
     plugin = plugin_main.UnifiedChatPlugin(TmpContext(tmp_path / "data1"))
     await plugin.initialize()
     try:
@@ -96,7 +95,6 @@ async def test_plugin_lifecycle_in_real_astrbot(tmp_path):
 
 @pytest.mark.asyncio
 async def test_pipeline_writes_to_temp_db(tmp_path):
-    sys.path.insert(0, "/AstrBot")
 
     plugin = plugin_main.UnifiedChatPlugin(TmpContext(tmp_path / "data2"))
     await plugin.initialize()

@@ -21,6 +21,9 @@ dev = [
   "pydantic>=2.0",
 ]
 
+[project.optional-dependencies]
+e2e = ["astrbot>=4.27.3,<5.0.0"]
+
 [build-system]
 requires = ["maturin>=1.7,<2.0"]
 build-backend = "maturin"
@@ -54,6 +57,10 @@ select = ["E", "F", "I", "B", "UP", "SIM"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+addopts = "-m 'not fullboot'"
+markers = [
+  "fullboot: boots a real AstrBot subprocess; slow, run explicitly with -m fullboot",
+]
 
 [tool.coverage.run]
 source = ["unified_chat"]
