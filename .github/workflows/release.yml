@@ -1,0 +1,66 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            manylinux: "2_28"
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            manylinux: "2_28"
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            manylinux: "auto"
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            manylinux: "auto"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          manylinux: ${{ matrix.manylinux }}
+          command: build
+          args: --release --strip --out dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheel-${{ matrix.target }}
+          path: dist/*.whl
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+          path: dist
+      - name: Checksums and version guard
+        shell: bash
+        run: |
+          TAG_NUM="${GITHUB_REF_NAME#v}"
+          for w in dist/*.whl; do
+            case "$(basename "$w")" in
+              *-"${TAG_NUM}"-*) ;;
+              *) echo "::error::wheel version mismatch: $w"; exit 1 ;;
+            esac
+          done
+          cd dist && sha256sum --tag *.whl > SHA256SUMS
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.whl
+            dist/SHA256SUMS
