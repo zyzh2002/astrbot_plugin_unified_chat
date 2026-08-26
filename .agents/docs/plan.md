@@ -34,11 +34,30 @@
 - Manylinux 2_28 CI (GitHub Actions), error isolation, terminate cleanup, e2e contracts
 - Spec: specs/006-hardening.md
 
-### Phase 5: Docs & Release [PENDING]
-- Human docs finalization (docs/ already updated), marketplace metadata, pre-release validation
-- Real Docker E2E run against AstrBot >=4.27.3 (local machine has no astrbot container yet)
+### Phase 5: Docs & Release [DONE]
+- Human docs finalized, repository metadata corrected, release workflow validated
+- AstrBot optional `e2e` dependency, portable E2E and full-boot harness shipped
+- v0.1.0 published with 4-platform native wheels and checksums
+
+### Phase 6: Memory Depth [DONE]
+- Typed atoms, per-type TTL, session isolation and FTS5 + LIKE RRF retrieval
+- LLM summaries, recall/memorize tools, backups and `/umem` administration
+- In-place schema migration with mandatory pre-migration backup
+- Spec: specs/008-memory-depth.md
+
+### Phase 7: Group Humanization [DONE]
+- Air-reading gate, attention/fatigue state and unreplied-message cache
+- Group-only proactive openers with persisted cooldown/deduplication
+- Spec: specs/009-group-humanize.md
+
+### Phase 8: Learning Depth [DONE]
+- Per-session slang learning, affinity, mood and persona review chain
+- Budgeted context injection and stable sender identity
+- Spec: specs/010-learning-depth.md
 
 ## Constraints
-- AstrBot >=4.27.3,<5.0.0, linux manylinux_2_28 x86_64 only, sqlite only
-- RAG agentic only, memory 30d, embedding migration = full rebuild
+- AstrBot >=4.27.3,<5.0.0, Python >=3.12, SQLite/FTS5 storage
+- Native wheels: linux-x86_64, linux-aarch64, windows-x86_64, macos-arm64
+- RAG uses AstrBot's built-in KB only; embedding migration = full rebuild
+- Persistent memory is session-isolated by default; destructive commands require admin
 - Human docs Chinese in docs/, agent docs English in .agents/docs/

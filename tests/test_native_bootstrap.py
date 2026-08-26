@@ -68,7 +68,7 @@ class TestWheelAssetName:
 class TestTryLoadCached:
     @staticmethod
     def _native_dir(root):
-        return root / "native" / "0.1.0"
+        return root / "native" / bootstrap.plugin_version()
 
     def _write_stub(self, monkeypatch, calls):
         import types

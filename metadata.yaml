@@ -2,7 +2,7 @@ name: astrbot_plugin_unified_chat
 display_name: Unified Chat
 desc: Unified conversational intelligence for AstrBot — conversation enhancement, persistent memory, adaptive learning and RAG in one plugin.
 short_desc: Unified dialogue, memory, learning and RAG.
-version: 0.1.0
+version: 0.2.0
 author: Unified Chat Team
 repo: https://github.com/zyzh2002/astrbot_plugin_unified_chat
 astrbot_version: ">=4.27.3,<5.0.0"
