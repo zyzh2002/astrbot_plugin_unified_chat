@@ -113,6 +113,15 @@ class TestAttentionDecay:
         late = tracker.decayed(state, "u1", now=100.0)
         assert 0.0 < late < early <= 1.0
 
+    def test_other_user_message_does_not_refresh_attention(self):
+        from unified_chat.services.humanize_state import AttentionTracker, SessionGateState
+
+        tracker = AttentionTracker(half_life_seconds=10.0)
+        state = SessionGateState()
+        tracker.bump(state, "alice", now=0.0)
+        tracker.bump(state, "bob", now=100.0)
+        assert tracker.decayed(state, "alice", now=100.0) < 0.01
+
 
 class TestAirParsing:
     def test_parse_yes_no_garbage(self):
@@ -205,3 +214,23 @@ class TestHumanizeServiceFlow:
         ev3 = make_event("third message continuing")
         out3 = await svc.process(ev3)
         assert out3.allow is True and out3.merged_context == ""
+
+    async def test_air_no_does_not_commit_reply_state(self):
+        from unified_chat.services.humanize_gate import GateDecision
+        from unified_chat.services.humanize_service import HumanizeService
+
+        async def deny(*_args):
+            return False
+
+        class AirCfg(Cfg):
+            humanize_air_reading_llm = True
+
+        svc = HumanizeService(object(), AirCfg(), rng=random.Random(1))
+        svc.gate.decide = lambda _ev, _now=None: GateDecision(True, "probability")
+        svc.air.should_reply = deny
+        event = make_event("ordinary group chatter")
+        state = svc.gate._state(event.unified_msg_origin)
+        before = (state.last_reply_ts, state.consecutive_replies)
+        out = await svc.process(event)
+        assert out.allow is False
+        assert (state.last_reply_ts, state.consecutive_replies) == before

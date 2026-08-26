@@ -55,7 +55,7 @@ class FakeKbManager:
 
     async def retrieve(self, query, kb_names, **kw):
         self.retrieves.append((query, kb_names))
-        return {"context_text": "MEM"}
+        return {"context_text": "MEM", "results": []}
 
 
 class FakeContext:
@@ -156,7 +156,7 @@ async def test_retrieve_kb_and_fallback(tmp_path):
     mgr = FakeKbManager(FakeKbHelper())
     svc = MemoryService(FakeContext(mgr), PluginConfig(embedding_provider_id="ep1"))
     svc._kb_helper = mgr.helper
-    assert await svc.retrieve("hello") == "MEM"
+    assert await svc.retrieve("hello") == ""
     svc._kb_helper = None
     mgr.retrieves.clear()
     from unified_chat.storage.repo import MemoryRepo
@@ -168,4 +168,51 @@ async def test_retrieve_kb_and_fallback(tmp_path):
     )
     result = await svc.retrieve("hello")
     assert "hello memory world" in result
+    await close_engine()
+
+
+@pytest.mark.asyncio
+async def test_kb_results_are_filtered_by_session_and_ttl(tmp_path):
+    import pathlib
+    from datetime import UTC, datetime, timedelta
+
+    from unified_chat.storage.database import get_engine
+    from unified_chat.storage.models import Memory
+    from unified_chat.storage.repo import MemoryRepo
+
+    reset_engine_for_tests()
+    await get_engine(pathlib.Path(tmp_path) / "kb-filter.db")
+
+    class Manager(FakeKbManager):
+        async def retrieve(self, **kw):
+            return {
+                "context_text": "LEAK-MARKER",
+                "results": [
+                    {"doc_id": "s1"},
+                    {"doc_id": "s2"},
+                    {"doc_id": "global"},
+                    {"doc_id": "expired"},
+                ],
+            }
+
+    mgr = Manager(FakeKbHelper())
+    svc = MemoryService(FakeContext(mgr), PluginConfig(embedding_provider_id="ep1"))
+    svc._kb_helper = mgr.helper
+    rows = [
+        Memory(content="session one", session_id="one", kb_doc_id="s1"),
+        Memory(content="session two", session_id="two", kb_doc_id="s2"),
+        Memory(content="global visible", session_id="", kb_doc_id="global"),
+        Memory(
+            content="expired hidden",
+            session_id="one",
+            kb_doc_id="expired",
+            expires_at=datetime.now(UTC) - timedelta(days=1),
+        ),
+    ]
+    for row in rows:
+        await MemoryRepo.add(row)
+    result = await svc.retrieve("query", session_id="one")
+    assert "session one" in result and "global visible" in result
+    assert "session two" not in result and "expired hidden" not in result
+    assert "LEAK-MARKER" not in result
     await close_engine()

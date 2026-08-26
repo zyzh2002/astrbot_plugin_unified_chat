@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
+import json
 import random
 import time
 from typing import Any
@@ -29,9 +31,10 @@ class ProactiveService:
         if self._task is None or self._task.done():
             self._task = asyncio.create_task(self._run(), name="unified_chat_proactive")
 
-    def stop(self) -> None:
+    async def stop(self) -> None:
         if self._task is not None and not self._task.done():
             self._task.cancel()
+            await asyncio.gather(self._task, return_exceptions=True)
         self._task = None
 
     async def _run(self) -> None:
@@ -56,12 +59,14 @@ class ProactiveService:
         )
         cutoff = time.time() - threshold_min * 60
         sent = 0
-        sessions = await repos.MessageSessionRepo.distinct_umos(limit=50)
+        sessions = await repos.MessageScanRepo.distinct_group_umos(limit=50)
         for umo, last_ts in sessions:
             now = time.time()
             if last_ts > cutoff:
                 continue
             if now - self._last_sent.get(umo, 0) < threshold_min * 60:
+                continue
+            if await self._recently_sent(umo, threshold_min * 60):
                 continue
             if self.rng.random() > 0.5:
                 continue
@@ -84,14 +89,61 @@ class ProactiveService:
             text = (getattr(resp, "completion_text", "") or "").strip().strip('"')
             if not text or len(text) > 300:
                 return False
+            if await self._recent_duplicate(umo, text):
+                return False
             from astrbot.api.event import MessageChain  # type: ignore
             from astrbot.api.message_components import Plain  # type: ignore
 
             await self.context.send_message(umo, MessageChain([Plain(text)]))
+            await self._remember_sent(umo, text)
             return True
         except Exception:
             self._log_error("send_opener")
             return False
+
+    @staticmethod
+    def _dedup_key(umo: str) -> str:
+        return "proactive_last:" + hashlib.sha256(umo.encode()).hexdigest()[:24]
+
+    async def _recent_duplicate(self, umo: str, text: str) -> bool:
+        from ..storage import kv as kv_store
+
+        raw = await kv_store.kv_get(self._dedup_key(umo))
+        if not raw:
+            return False
+        try:
+            data = json.loads(raw)
+            return (
+                data.get("hash") == hashlib.sha256(text.encode()).hexdigest()
+                and time.time() - float(data.get("ts", 0)) < 86400
+            )
+        except Exception:
+            return False
+
+    async def _recently_sent(self, umo: str, window_seconds: float) -> bool:
+        from ..storage import kv as kv_store
+
+        raw = await kv_store.kv_get(self._dedup_key(umo))
+        if not raw:
+            return False
+        try:
+            data = json.loads(raw)
+            return time.time() - float(data.get("ts", 0)) < window_seconds
+        except Exception:
+            return False
+
+    async def _remember_sent(self, umo: str, text: str) -> None:
+        from ..storage import kv as kv_store
+
+        await kv_store.kv_set(
+            self._dedup_key(umo),
+            json.dumps(
+                {
+                    "hash": hashlib.sha256(text.encode()).hexdigest(),
+                    "ts": time.time(),
+                }
+            ),
+        )
 
     @staticmethod
     def _log_error(msg: str) -> None:

@@ -26,9 +26,10 @@ class MemoryCleanupCron:
         if self._task is None or self._task.done():
             self._task = asyncio.create_task(self._run(), name="unified_chat_cron")
 
-    def stop(self) -> None:
+    async def stop(self) -> None:
         if self._task is not None and not self._task.done():
             self._task.cancel()
+            await asyncio.gather(self._task, return_exceptions=True)
         self._task = None
 
     @staticmethod

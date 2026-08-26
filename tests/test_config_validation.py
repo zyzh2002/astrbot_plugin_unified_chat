@@ -1,6 +1,6 @@
 """Tests for PluginConfig validation and coercion."""
 
-from unified_chat.config import PluginConfig
+from unified_chat.config import DEFAULTS, PluginConfig
 
 
 def test_config_clamps_invalid():
@@ -53,6 +53,28 @@ def test_humanize_keys_roundtrip():
     assert PluginConfig.from_dict({}).humanize_enable is False
     dump = cfg.to_dict()
     assert "blacklist_users" in dump and "humanize_enable" in dump
+
+
+def test_to_dict_contains_every_persisted_default_key():
+    assert set(PluginConfig().to_dict()) == set(DEFAULTS)
+
+
+def test_humanize_full_roundtrip():
+    raw = {
+        "humanize_base_probability": 0.41,
+        "humanize_after_reply_probability": 0.72,
+        "humanize_boost_window_seconds": 321,
+        "humanize_attention_enabled": False,
+        "humanize_attention_boost_max": 0.22,
+        "humanize_fatigue_penalty_max": 0.18,
+        "humanize_air_reading_llm": False,
+        "humanize_air_reading_provider_id": "provider-x",
+        "humanize_proactive": True,
+        "humanize_proactive_min_silence_minutes": 99,
+    }
+    dumped = PluginConfig.from_dict(raw).to_dict()
+    for key, value in raw.items():
+        assert dumped[key] == value
 
 
 def test_phase8_learning_keys_roundtrip():

@@ -113,3 +113,33 @@ async def test_refine_failure_keeps_pipeline(tmp_path):
     await svc.maybe_learn(FakeEvent("hello world long message"), "alice")
     assert await MemoryRepo.list_all() == []
     assert await MessageRepo.count() == 1
+
+
+@pytest.mark.asyncio
+async def test_learning_uses_atom_writer_with_event_session(tmp_path):
+    await _db(tmp_path)
+    calls = []
+
+    async def writer(text, **kwargs):
+        calls.append((text, kwargs))
+        return object(), True
+
+    svc = LearningService(
+        FakeContext(provider_id="p1"),
+        PluginConfig(chat_provider_id="p1"),
+        writer,
+    )
+    await svc.maybe_learn(
+        FakeEvent("I prefer quiet mornings very much", umo="group:GroupMessage:g1"),
+        "user-id",
+    )
+    assert calls == [
+        (
+            "durable fact about alice",
+            {
+                "source": "learning",
+                "importance": 0.5,
+                "session_id": "group:GroupMessage:g1",
+            },
+        )
+    ]

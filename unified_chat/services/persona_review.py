@@ -41,17 +41,20 @@ async def _save(items: list[dict]) -> None:
 class PersonaReviewService:
     """Suggests persona tweaks; humans approve/reject via commands."""
 
-    def __init__(self, context: Any, config: Any):
+    def __init__(self, context: Any, config: Any, memory_service: Any | None = None):
         self.context = context
         self.config = config
+        self.memory_service = memory_service
 
-    async def maybe_suggest(self) -> str | None:
+    async def maybe_suggest(self, session_id: str = "") -> str | None:
         """Generate one suggestion from recent memories; returns its id."""
         llm_generate = getattr(self.context, "llm_generate", None)
         provider_id = getattr(self.config, "chat_provider_id", "")
         if llm_generate is None or not provider_id:
             return None
-        hints = await self._memory_hints()
+        hints = await self._memory_hints(session_id)
+        if not hints:
+            return None
         try:
             resp = await llm_generate(
                 chat_provider_id=provider_id,
@@ -72,20 +75,24 @@ class PersonaReviewService:
             "id": uuid.uuid4().hex[:8],
             "text": text,
             "created_at": time.strftime("%Y-%m-%d %H:%M"),
+            "session_id": session_id,
         }
         items.append(entry)
         await _save(items[-MAX_PENDING:])
         return entry["id"]
 
-    async def _memory_hints(self) -> str:
+    async def _memory_hints(self, session_id: str) -> str:
         try:
-            service = getattr(self.config, "_hybrid_host", None)
-            if service is not None:
-                hits = await service.retrieve_hybrid("用户 偏好 事实", top_k=10)
+            if self.memory_service is not None:
+                hits = await self.memory_service.retrieve_hybrid(
+                    "用户 偏好 事实",
+                    session_id=session_id,
+                    top_k=10,
+                )
                 return "\n".join(f"- {m.content[:80]}" for m in hits)
         except Exception:
             pass
-        return "- (no memory host configured)"
+        return ""
 
     @staticmethod
     async def list_pending() -> list[dict]:

@@ -14,7 +14,11 @@ async def inject_kb_tool(event: Any, req: Any, config: Any, rag_service: Any) ->
     if not config.rag_agentic or not config.rag_kbs:
         return
     try:
-        tool = rag_service.build_kb_tool(config.rag_kbs)
+        kb_names = await rag_service.exclude_kb(
+            config.rag_kbs,
+            config.memory_kb_name,
+        )
+        tool = rag_service.build_kb_tool(kb_names)
         if tool is None:
             return
         func_tool = getattr(req, "func_tool", None)
@@ -67,7 +71,8 @@ async def inject_memories(event: Any, req: Any, config: Any, memory_service: Any
         text = getattr(event, "message_str", "")
         if not text:
             return
-        memories = await memory_service.retrieve(text)
+        session_id = getattr(event, "unified_msg_origin", "") or ""
+        memories = await memory_service.retrieve(text, session_id=session_id)
         if not memories:
             return
         contexts = getattr(req, "contexts", None)

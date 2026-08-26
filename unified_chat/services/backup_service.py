@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import contextlib
 import re
-import shutil
 import sqlite3
 import time
 from pathlib import Path
@@ -45,12 +44,6 @@ class BackupService:
                     dst.close()
             finally:
                 src.close()
-            # sidecars copied best-effort for completeness
-            for suffix in ("-wal", "-shm"):
-                sidecar = Path(str(self.db_path) + suffix)
-                if sidecar.exists():
-                    with contextlib.suppress(Exception):
-                        shutil.copy2(sidecar, dest_dir / sidecar.name)
             self._prune()
             return dest_dir
         except Exception:
@@ -67,11 +60,13 @@ class BackupService:
                 for entry in self.backup_root.iterdir()
                 if entry.is_dir() and _STAMP_RE.match(entry.name)
             ),
-            key=lambda entry: entry.name,
+            key=lambda entry: entry.stat().st_mtime,
         )
         excess = len(entries) - keep_last
         for entry in entries[: max(0, excess)]:
             with contextlib.suppress(Exception):
+                import shutil
+
                 shutil.rmtree(entry, ignore_errors=True)
 
     def list_backups(self) -> list[str]:

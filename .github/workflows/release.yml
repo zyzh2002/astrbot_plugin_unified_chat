@@ -8,7 +8,44 @@ permissions:
   contents: write
 
 jobs:
+  version:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify release versions
+        shell: bash
+        run: |
+          python - <<'PY'
+          import os
+          import pathlib
+          import re
+          import tomllib
+
+          root = pathlib.Path('.')
+          tag = os.environ['GITHUB_REF_NAME'].removeprefix('v')
+          versions = {
+              'pyproject.toml': tomllib.loads(
+                  (root / 'pyproject.toml').read_text(encoding='utf-8')
+              )['project']['version'],
+              'rust/Cargo.toml': tomllib.loads(
+                  (root / 'rust/Cargo.toml').read_text(encoding='utf-8')
+              )['package']['version'],
+              'metadata.yaml': re.search(
+                  r'(?m)^version:\s*([^\s#]+)',
+                  (root / 'metadata.yaml').read_text(encoding='utf-8'),
+              ).group(1).strip('"\''),
+              'unified_chat/__init__.py': re.search(
+                  r'(?m)^__version__\s*=\s*["\']([^"\']+)',
+                  (root / 'unified_chat/__init__.py').read_text(encoding='utf-8'),
+              ).group(1),
+          }
+          mismatches = {source: value for source, value in versions.items() if value != tag}
+          if mismatches:
+              raise SystemExit(f'release version mismatch: expected {tag}, got {mismatches}')
+          PY
+
   build:
+    needs: version
     name: Build ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
     strategy:

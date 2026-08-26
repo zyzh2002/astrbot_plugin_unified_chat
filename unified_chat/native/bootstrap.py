@@ -55,27 +55,35 @@ FACADE_FUNCTIONS = ("chunk_text", "hash_dedup", "score_importance")
 def default_cache_dir() -> Path:
     from ..utils.path import resolve_data_dir
 
-    return resolve_data_dir(None, None) / "native"
+    return resolve_data_dir(None, None)
+
+
+def _module_names() -> tuple[str, str]:
+    facade_name = __package__ or "unified_chat.native"
+    package_name = facade_name.rsplit(".", 1)[0]
+    return f"{package_name}._native", facade_name
 
 
 def _import_extension(path: Path) -> None:
     import importlib.util
 
-    spec = importlib.util.spec_from_file_location("unified_chat._native", str(path))
+    extension_name, _facade_name = _module_names()
+    spec = importlib.util.spec_from_file_location(extension_name, str(path))
     if spec is None or spec.loader is None:
         raise ImportError(f"cannot build import spec for {path}")
     module = importlib.util.module_from_spec(spec)
-    sys.modules["unified_chat._native"] = module
+    sys.modules[extension_name] = module
     try:
         spec.loader.exec_module(module)
     except Exception:
-        sys.modules.pop("unified_chat._native", None)
+        sys.modules.pop(extension_name, None)
         raise
     _bind_facade(module)
 
 
 def _bind_facade(module) -> None:
-    facade = sys.modules.get("unified_chat.native")
+    _extension_name, facade_name = _module_names()
+    facade = sys.modules.get(facade_name)
     if facade is None:
         return
     for fn_name in FACADE_FUNCTIONS:
@@ -86,7 +94,7 @@ def _bind_facade(module) -> None:
 
 def try_load_cached(data_dir: Path) -> bool:
     """Load a previously prefetched binary; True on success."""
-    native_dir = Path(data_dir) / "native"
+    native_dir = Path(data_dir) / "native" / plugin_version()
     if not native_dir.is_dir():
         return False
     candidates = sorted(native_dir.glob("_native*.so")) + sorted(
@@ -102,7 +110,7 @@ def try_load_cached(data_dir: Path) -> bool:
 
 
 def cache_dir() -> Path:
-    return default_cache_dir()
+    return default_cache_dir() / "native" / plugin_version()
 
 
 def plugin_version() -> str:
@@ -202,8 +210,6 @@ async def prefetch() -> None:
         if asset is None:
             return
         dest = cache_dir()
-        if dest.is_dir() and any(dest.glob("_native*")):
-            return
         base = f"{RELEASE_BASE}/v{version}"
         wheel_bytes = await _fetch(f"{base}/{asset}")
         sums_bytes = await _fetch(f"{base}/SHA256SUMS")
@@ -223,7 +229,10 @@ def prefetch_async(enabled: bool) -> asyncio.Task | None:
     if not enabled:
         return None
     try:
-        import unified_chat._native  # noqa: F401
+        import importlib
+
+        extension_name, _facade_name = _module_names()
+        importlib.import_module(extension_name)
 
         return None
     except Exception:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+from sqlalchemy import UniqueConstraint
 from sqlmodel import Field, SQLModel
 
 
@@ -86,6 +87,7 @@ class UserAffinity(SQLModel, table=True):
     """Per-session-user affection score in [0, 100]."""
 
     __tablename__ = "user_affinity"
+    __table_args__ = (UniqueConstraint("umo", "user_id", name="uq_affinity_scope_user"),)
 
     id: int | None = Field(default=None, primary_key=True)
     umo: str = Field(index=True, max_length=255)

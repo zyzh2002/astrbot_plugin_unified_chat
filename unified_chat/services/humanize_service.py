@@ -54,6 +54,8 @@ class HumanizeService:
                 return HumanizeOutcome(False, "air_no")
             entries = self.cache.drain(session)
             merged = self.cache.merge_block(entries) if entries else ""
+            if decision.reason == "probability":
+                self.gate.commit_reply(event)
             return HumanizeOutcome(True, decision.reason, merged)
 
         # denied paths that still record chatter

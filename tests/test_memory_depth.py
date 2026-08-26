@@ -287,6 +287,12 @@ class TestSummarizer:
         assert await service.summarize_session("s2") == 0
         await self._cleanup()
 
+    async def test_summary_batch_zero_disables_direct_session_summary(self):
+        service = await self._service('[{"content": "x fact", "type": "FACTUAL"}]')
+        service.config.summary_batch_size = 0
+        assert await service.summarize_session("disabled") == 0
+        await self._cleanup()
+
 
 class TestBackupService:
     def _make_db(self, root):
@@ -314,6 +320,13 @@ class TestBackupService:
         service = self._service(db)
         dest = service.run_backup("manual")
         assert dest is not None and (dest / "unified_chat.db").exists()
+        assert not list(dest.glob("*-wal"))
+        assert not list(dest.glob("*-shm"))
+        import sqlite3
+
+        con = sqlite3.connect(dest / "unified_chat.db")
+        assert con.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+        con.close()
 
     def test_retention_prunes_oldest(self, tmp_path):
         import time
@@ -324,6 +337,18 @@ class TestBackupService:
             service.run_backup("daily")
             time.sleep(1.1)  # ensure distinct second-resolution stamps
         assert len(service.list_backups()) == 2
+
+    def test_retention_never_deletes_just_created_backup(self, tmp_path):
+        db = self._make_db(tmp_path)
+        service = self._service(db, keep_last=1)
+        old = service.run_backup("v999")
+        assert old is not None
+        import time
+
+        time.sleep(1.1)
+        newest = service.run_backup("schema_v2")
+        assert newest is not None and newest.exists()
+        assert service.list_backups() == [newest.name]
 
     async def test_version_backup_once(self, tmp_path, monkeypatch):
         import tempfile
@@ -379,3 +404,71 @@ class TestSequentialStoreRegression:
             finally:
                 await close_engine()
                 reset_engine_for_tests()
+
+    async def test_concurrent_same_scope_atom_is_unique(self):
+        import asyncio
+        import tempfile
+        from pathlib import Path
+
+        from unified_chat.storage.database import close_engine, get_engine, reset_engine_for_tests
+        from unified_chat.storage.repo import MemoryRepo
+
+        reset_engine_for_tests()
+        with tempfile.TemporaryDirectory() as d:
+            await get_engine(Path(d) / "atom-race.db")
+            try:
+                service = _make_service()
+                await asyncio.gather(
+                    *(
+                        service.store_atom(
+                            "same concurrent durable atom",
+                            source="test",
+                            importance=0.7,
+                            session_id="s1",
+                        )
+                        for _ in range(20)
+                    )
+                )
+                assert await MemoryRepo.count() == 1
+            finally:
+                await close_engine()
+                reset_engine_for_tests()
+
+
+class TestVisibilityAndExpiry:
+    @pytest.fixture(autouse=True)
+    async def _db(self, tmp_path):
+        from unified_chat.storage.database import close_engine, get_engine, reset_engine_for_tests
+
+        reset_engine_for_tests()
+        await get_engine(tmp_path / "visible.db")
+        yield
+        await close_engine()
+        reset_engine_for_tests()
+
+    async def test_missing_session_only_returns_global_when_isolated(self):
+        from unified_chat.storage.models import Memory
+        from unified_chat.storage.repo import MemoryFts, MemoryRepo
+
+        global_mem = await MemoryRepo.add(Memory(content="cobalt global", session_id=""))
+        private = await MemoryRepo.add(Memory(content="cobalt private", session_id="s2"))
+        await MemoryFts.index_add(global_mem.id, global_mem.content, "")
+        await MemoryFts.index_add(private.id, private.content, "s2")
+        results = await _make_service().retrieve_hybrid("cobalt")
+        assert [m.id for m in results] == [global_mem.id]
+
+    async def test_expired_memory_is_not_retrieved(self):
+        from datetime import UTC, datetime, timedelta
+
+        from unified_chat.storage.models import Memory
+        from unified_chat.storage.repo import MemoryFts, MemoryRepo
+
+        expired = await MemoryRepo.add(
+            Memory(
+                content="amber expired secret",
+                importance=1.0,
+                expires_at=datetime.now(UTC) - timedelta(days=1),
+            )
+        )
+        await MemoryFts.index_add(expired.id, expired.content, "")
+        assert await _make_service().retrieve_hybrid("amber") == []

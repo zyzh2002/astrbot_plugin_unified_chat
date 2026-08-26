@@ -26,6 +26,9 @@ class FakeEvent:
     def get_sender_name(self):
         return "alice"
 
+    def get_sender_id(self):
+        return "alice-id"
+
     def is_private_chat(self):
         return False
 
@@ -39,8 +42,23 @@ async def test_lifecycle_creates_memory_service_and_cron(tmp_path):
         assert lc._memory_service is not None
         assert lc._cron is not None
         assert lc._cron._task is not None
+        assert lc._cron.backup_service is lc._backup_service
         await lc.on_unload()
         assert lc._cron._task is None
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_uses_injected_plugin_config(tmp_path):
+    reset_engine_for_tests()
+    global_cfg = {"humanize_enable": False, "native_autodownload": True}
+    plugin_cfg = {"humanize_enable": True, "native_autodownload": False}
+    with patch("unified_chat.utils.path.resolve_data_dir", lambda raw, ctx: tmp_path / "data"):
+        lc = PluginLifecycle(None, FakeContext(global_cfg), plugin_cfg)
+        await lc.on_load()
+        assert lc._config is not None
+        assert lc._config.humanize_enable is True
+        assert lc._config.native_autodownload is False
+        await lc.on_unload()
 
 
 @pytest.mark.asyncio
@@ -59,3 +77,36 @@ async def test_handle_message_stores_memory_in_background(tmp_path):
         assert memories[0].content == text
         await lc.on_unload()
         await close_engine()
+
+
+@pytest.mark.asyncio
+async def test_umem_forget_cannot_delete_other_session(tmp_path):
+    reset_engine_for_tests()
+    with patch("unified_chat.utils.path.resolve_data_dir", lambda raw, ctx: tmp_path / "data"):
+        lc = PluginLifecycle(None, FakeContext())
+        await lc.on_load()
+        own = await lc._memory_service.memorize_text(
+            "own session durable fact",
+            session_id="p:m:1",
+        )
+        other = await lc._memory_service.memorize_text(
+            "other session durable fact",
+            session_id="p:m:2",
+        )
+        event = FakeEvent("/umem", umo="p:m:1")
+        assert "deleted 0" in await lc.umem(event, "forget", str(other))
+        assert "deleted 1" in await lc.umem(event, "forget", str(own))
+        await lc.on_unload()
+
+
+@pytest.mark.asyncio
+async def test_umem_reset_clears_global_scope_when_isolation_off(tmp_path):
+    reset_engine_for_tests()
+    cfg = {"memory_session_isolation": False}
+    with patch("unified_chat.utils.path.resolve_data_dir", lambda raw, ctx: tmp_path / "data"):
+        lc = PluginLifecycle(None, FakeContext(cfg), cfg)
+        await lc.on_load()
+        await lc._memory_service.memorize_text("global shared durable fact")
+        event = FakeEvent("/umem", umo="p:m:1")
+        assert "cleared 1" in await lc.umem(event, "reset", "")
+        await lc.on_unload()

@@ -94,3 +94,25 @@ def test_humanize_enabled_private_still_replies():
         assert reply2.strip(), "private chat got swallowed by the gate"
     finally:
         harness.stop()
+
+
+def test_plugin_config_can_disable_all_message_domains():
+    from .harness import AstrBotHarness
+
+    harness = AstrBotHarness.start(
+        plugin_config={
+            "enable_conversation_enhance": False,
+            "enable_persistent_memory": False,
+            "enable_adaptive_learning": False,
+            "native_autodownload": False,
+        }
+    )
+    try:
+        marker = "plugin-config-disabled-pipeline-marker"
+        harness.chat(marker)
+        rows = harness.sqlite_query(
+            f"SELECT COUNT(*) FROM messages WHERE content = '{marker}'"
+        )
+        assert rows and rows[0][0] == 0
+    finally:
+        harness.stop()

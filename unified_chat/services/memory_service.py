@@ -25,7 +25,12 @@ class MemoryService:
         self._kb_helper: Any | None = None
         from .memory_summarizer import MemorySummarizer
 
-        self.summarizer = MemorySummarizer(context, config)
+        self.summarizer = MemorySummarizer(context, config, self.store_atom)
+
+    def session_id_for(self, event: Any) -> str:
+        if not getattr(self.config, "memory_session_isolation", True):
+            return ""
+        return getattr(event, "unified_msg_origin", "") or ""
 
     async def maybe_summarize(self, event: Any) -> int:
         umo = getattr(event, "unified_msg_origin", "") or ""
@@ -34,28 +39,68 @@ class MemoryService:
         return await self.summarizer.maybe_summarize(umo)
 
     async def memorize_text(
-        self, text: str, source: str = "agent", mtype: str | None = None
+        self,
+        text: str,
+        source: str = "agent",
+        mtype: str | None = None,
+        session_id: str | None = None,
     ) -> int | None:
         """Explicitly store one durable atom; returns its id."""
-        resolved_type = mtype or classify_memory(text)
-        dedup = ChatService.hash_of(text)
-        existing = await repos.MemoryRepo.get_by_hash(dedup)
-        if existing is not None:
-            return existing.id
-        from datetime import UTC, datetime, timedelta
+        memory, _created = await self.store_atom(
+            text,
+            source=source,
+            importance=0.7,
+            session_id=session_id,
+            mtype=mtype,
+        )
+        return memory.id
 
-        mem = await repos.MemoryRepo.add(
+    async def store_atom(
+        self,
+        text: str,
+        *,
+        source: str,
+        importance: float,
+        session_id: str | None,
+        mtype: str | None = None,
+    ) -> tuple[Memory, bool]:
+        """Normalize and store one atom through the single invariant path."""
+        resolved_type = mtype or classify_memory(text)
+        isolation = getattr(self.config, "memory_session_isolation", True)
+        sid = (session_id or "") if isolation else ""
+        dedup = ChatService.hash_of(text)
+        existing = await repos.MemoryLookupRepo.get_by_hash(
+            dedup,
+            session_id=sid,
+            isolation=isolation,
+        )
+        if existing is not None:
+            return existing, False
+        memory, created = await repos.MemoryRepo.add_unique(
             Memory(
                 content=text,
-                importance=0.7,
+                importance=max(0.0, min(1.0, importance)),
                 source=source,
                 dedup_hash=dedup,
                 memory_type=resolved_type,
+                session_id=sid,
                 expires_at=datetime.now(UTC) + timedelta(days=ttl_for(resolved_type)),
             )
         )
-        await repos.MemoryFts.index_add(mem.id, text, mem.session_id)
-        return mem.id
+        if not created:
+            return memory, False
+        await repos.MemoryFts.index_add(memory.id, text, sid)
+        if importance >= self.config.importance_threshold and self._kb_helper is not None:
+            with contextlib.suppress(Exception):
+                doc = await self._kb_helper.upload_document(
+                    file_name=f"memory_{memory.id}.txt",
+                    file_content=None,
+                    file_type="txt",
+                    pre_chunked_text=[text],
+                )
+                if memory.id is not None:
+                    await repos.MemoryRepo.update_kb_doc_id(memory.id, doc.doc_id)
+        return memory, True
 
     async def ensure_memory_kb(self) -> None:
         """Bind the memory KB helper; SQLite-only mode on any failure."""
@@ -114,36 +159,13 @@ class MemoryService:
             text = event.message_str
             existing = await repos.MemoryRepo.list_all()
             importance = self.compute_importance(text, sender_id, existing)
-            mtype = classify_memory(text)
-            isolation = getattr(self.config, "memory_session_isolation", True)
-            session_id = (
-                (getattr(event, "unified_msg_origin", "") or "")
-                if isolation
-                else ""
+            session_id = self.session_id_for(event)
+            await self.store_atom(
+                text,
+                source=sender_id,
+                importance=importance,
+                session_id=session_id,
             )
-            expires_at = datetime.now(UTC) + timedelta(days=ttl_for(mtype))
-            mem = await repos.MemoryRepo.add(
-                Memory(
-                    content=text,
-                    importance=importance,
-                    source=sender_id,
-                    dedup_hash=ChatService.hash_of(text),
-                    memory_type=mtype,
-                    session_id=session_id,
-                    expires_at=expires_at,
-                )
-            )
-            await repos.MemoryFts.index_add(mem.id, text, session_id)
-            if importance >= self.config.importance_threshold and self._kb_helper is not None:
-                with contextlib.suppress(Exception):
-                    doc = await self._kb_helper.upload_document(
-                        file_name=f"memory_{mem.id}.txt",
-                        file_content=None,
-                        file_type="txt",
-                        pre_chunked_text=[text],
-                    )
-                    if mem.id is not None:
-                        await repos.MemoryRepo.update_kb_doc_id(mem.id, doc.doc_id)
         except Exception:
             self._log_error("maybe_store")
 
@@ -155,10 +177,31 @@ class MemoryService:
                     query=query,
                     kb_names=[self.config.memory_kb_name],
                     top_k_fusion=20,
-                    top_m_final=5,
+                    top_m_final=20,
                 )
-                if result and isinstance(result, dict) and result.get("context_text"):
-                    return str(result["context_text"])
+                if result and isinstance(result, dict):
+                    raw_results = result.get("results") or []
+                    doc_ids = [
+                        str(item.get("doc_id"))
+                        for item in raw_results
+                        if isinstance(item, dict) and item.get("doc_id")
+                    ]
+                    visible = await repos.MemoryLookupRepo.get_visible_by_kb_doc_ids(
+                        doc_ids,
+                        session_id=session_id or "",
+                        isolation=getattr(
+                            self.config,
+                            "memory_session_isolation",
+                            True,
+                        ),
+                    )
+                    lines = [
+                        f"- {visible[doc_id].content}"
+                        for doc_id in doc_ids
+                        if doc_id in visible
+                    ]
+                    if lines:
+                        return "\n".join(lines)
         hits = await self.retrieve_hybrid(query, session_id=session_id)
         if hits:
             return "\n".join(f"- {m.content}" for m in hits)
@@ -170,11 +213,26 @@ class MemoryService:
         """RRF-fuse sparse sources (FTS5 + LIKE keyword); never raises."""
         scores: dict[int, float] = {}
         try:
-            fts_hits = await repos.MemoryFts.search(query, limit=10)
+            isolation = getattr(self.config, "memory_session_isolation", True)
+            sid = session_id or ""
+            now = datetime.now(UTC)
+            fts_hits = await repos.MemoryFts.search(
+                query,
+                limit=10,
+                session_id=sid,
+                isolation=isolation,
+                now=now,
+            )
         except Exception:
             fts_hits = []
         try:
-            kw_rows = await repos.MemoryRepo.search_by_keyword(query, limit=10)
+            kw_rows = await repos.MemoryRepo.search_by_keyword(
+                query,
+                limit=10,
+                session_id=sid,
+                isolation=isolation,
+                now=now,
+            )
         except Exception:
             kw_rows = []
 
@@ -188,22 +246,42 @@ class MemoryService:
                 scores[mid] = scores.get(mid, 0.0) + 1.0 / (60.0 + position + 1)
         if not scores:
             return []
-        rows = await repos.MemoryHybridRepo.get_by_ids(list(scores))
-        if self.config.memory_session_isolation and session_id is not None:
-            rows = [m for m in rows if (m.session_id or "") in ("", session_id)]
+        rows = await repos.MemoryHybridRepo.get_by_ids(
+            list(scores),
+            session_id=sid,
+            isolation=isolation,
+            now=now,
+        )
         rows.sort(key=lambda m: (-scores.get(m.id, 0.0), -m.reinforce_count, m.id))
         return rows[:top_k]
 
     async def delete_expired_memories(self) -> int:
         cutoff = datetime.now(UTC) - timedelta(days=self.config.memory_cleanup_days)
         expired = await repos.MemoryRepo.list_expired(self.config.importance_threshold, cutoff)
-        for m in expired:
+        return await self._delete_memories(expired)
+
+    async def forget(self, memory_id: int, session_id: str | None) -> int:
+        row = await repos.MemoryLookupRepo.get_visible_by_id(
+            memory_id,
+            session_id=session_id or "",
+            isolation=getattr(self.config, "memory_session_isolation", True),
+        )
+        return await self._delete_memories([row] if row is not None else [])
+
+    async def forget_session(self, session_id: str | None) -> int:
+        rows = await repos.MemoryAdminRepo.list_by_session(session_id or "")
+        return await self._delete_memories(rows)
+
+    async def _delete_memories(self, rows: list[Memory]) -> int:
+        for m in rows:
             if m.kb_doc_id and self._kb_helper is not None:
                 with contextlib.suppress(Exception):
                     await self._kb_helper.delete_document(m.kb_doc_id)
             if m.id is not None:
                 await repos.MemoryFts.index_remove(m.id)
-        return await repos.MemoryRepo.delete_by_ids([m.id for m in expired if m.id is not None])
+        return await repos.MemoryRepo.delete_by_ids(
+            [m.id for m in rows if m.id is not None]
+        )
 
     @staticmethod
     def _log_error(msg: str) -> None:

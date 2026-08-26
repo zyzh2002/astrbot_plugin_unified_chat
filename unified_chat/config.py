@@ -232,6 +232,18 @@ class PluginConfig:
             "summary_batch_size": self.summary_batch_size,
             "backup_keep_last": self.backup_keep_last,
             "humanize_enable": self.humanize_enable,
+            "humanize_base_probability": self.humanize_base_probability,
+            "humanize_after_reply_probability": self.humanize_after_reply_probability,
+            "humanize_boost_window_seconds": self.humanize_boost_window_seconds,
+            "humanize_attention_enabled": self.humanize_attention_enabled,
+            "humanize_attention_boost_max": self.humanize_attention_boost_max,
+            "humanize_fatigue_penalty_max": self.humanize_fatigue_penalty_max,
+            "humanize_air_reading_llm": self.humanize_air_reading_llm,
+            "humanize_air_reading_provider_id": self.humanize_air_reading_provider_id,
+            "humanize_proactive": self.humanize_proactive,
+            "humanize_proactive_min_silence_minutes": (
+                self.humanize_proactive_min_silence_minutes
+            ),
             "blacklist_users": self.blacklist_users,
             "trigger_keywords": self.trigger_keywords,
             "blocked_keywords": self.blocked_keywords,

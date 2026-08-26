@@ -17,6 +17,26 @@ class RagService:
     def __init__(self, context: Any):
         self.context = context
 
+    async def exclude_kb(
+        self,
+        kb_names: list[str],
+        excluded_kb_name: str,
+    ) -> list[str]:
+        manager = getattr(self.context, "kb_manager", None)
+        if manager is None:
+            return [name for name in kb_names if name != excluded_kb_name]
+        excluded = {excluded_kb_name}
+        try:
+            helper = await manager.get_kb_by_name(excluded_kb_name)
+            if helper is not None:
+                for attr in ("kb_id", "id", "kb_name", "name"):
+                    value = getattr(helper, attr, None)
+                    if value:
+                        excluded.add(str(value))
+        except Exception:
+            pass
+        return [name for name in kb_names if str(name) not in excluded]
+
     def build_kb_tool(self, kb_names: list[str], top_m_final: int = 5) -> Any | None:
         if not kb_names:
             return None

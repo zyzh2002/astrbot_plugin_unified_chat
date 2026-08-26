@@ -19,10 +19,10 @@ except ImportError:  # pragma: no cover - local dev (module imported as top-leve
 class UnifiedChatPlugin(Star):
     """Unified Chat — conversation, memory, learning and RAG."""
 
-    def __init__(self, context: Context):
-        super().__init__(context)
+    def __init__(self, context: Context, config: dict | None = None):
+        super().__init__(context, config)
         # Do not raise in __init__; defer to initialize().
-        self._lifecycle = PluginLifecycle(self, context)
+        self._lifecycle = PluginLifecycle(self, context, config)
         self._initialized = False
 
     async def initialize(self):
@@ -61,6 +61,7 @@ class UnifiedChatPlugin(Star):
         status = await self._lifecycle.get_status_async()
         yield event.plain_result(f"[UnifiedChat] {status}")
 
+    @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("unified_migrate")
     async def unified_migrate(self, event: AstrMessageEvent, kb_name: str = ""):
         """Migrate knowledge base to new embedding dimension. Admin only."""
@@ -70,6 +71,7 @@ class UnifiedChatPlugin(Star):
         result = await self._lifecycle.migrate_kb(event, kb_name.strip())
         yield event.plain_result(result)
 
+    @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("umem")
     async def umem(self, event: AstrMessageEvent, action: str = "", arg: str = ""):
         """Memory management: status/search/forget/backup/reset."""
@@ -80,6 +82,7 @@ class UnifiedChatPlugin(Star):
         yield event.plain_result(result)
 
 
+    @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("uslang")
     async def uslang(self, event: AstrMessageEvent, action: str = "", arg: str = ""):
         """Slang management: list/confirm/deny."""
@@ -89,6 +92,7 @@ class UnifiedChatPlugin(Star):
         result = await self._lifecycle.uslang(action.strip(), arg.strip())
         yield event.plain_result(result)
 
+    @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("upersona")
     async def upersona(self, event: AstrMessageEvent, action: str = "", arg: str = ""):
         """Persona suggestion review chain."""

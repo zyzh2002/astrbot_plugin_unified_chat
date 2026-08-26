@@ -95,9 +95,14 @@ class ReplyGate:
         if not allowed:
             state.last_message_ts = now
             return GateDecision(False, "probability")
+        return GateDecision(True, "probability")
+
+    def commit_reply(self, event: Any, now: float | None = None) -> None:
+        session = getattr(event, "unified_msg_origin", "") or "unknown"
+        state = self._state(session)
+        now = _now() if now is None else now
         self.fatigue.on_reply(state)
         state.last_reply_ts = now
-        return GateDecision(True, "probability")
 
     def _probability(self, state: SessionGateState, now: float) -> float:
         cfg = self.config

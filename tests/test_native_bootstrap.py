@@ -66,6 +66,10 @@ class TestWheelAssetName:
 
 
 class TestTryLoadCached:
+    @staticmethod
+    def _native_dir(root):
+        return root / "native" / "0.1.0"
+
     def _write_stub(self, monkeypatch, calls):
         import types
 
@@ -87,8 +91,8 @@ class TestTryLoadCached:
         monkeypatch.setattr(
             bootstrap, "_import_extension", self._write_stub(monkeypatch, calls)
         )
-        native = tmp_path / "native"
-        native.mkdir()
+        native = self._native_dir(tmp_path)
+        native.mkdir(parents=True)
         (native / "_native.cp312-abi3-win_amd64.pyd").write_bytes(b"x")
         assert bootstrap.try_load_cached(tmp_path) is True
         assert len(calls) == 1
@@ -105,8 +109,8 @@ class TestTryLoadCached:
             raise ImportError("bad magic")
 
         monkeypatch.setattr(bootstrap, "_import_extension", boom)
-        native = tmp_path / "native"
-        native.mkdir()
+        native = self._native_dir(tmp_path)
+        native.mkdir(parents=True)
         (native / "_native_broken.pyd").write_bytes(b"garbage")
         assert bootstrap.try_load_cached(tmp_path) is False
 
@@ -118,12 +122,38 @@ class TestTryLoadCached:
             raise ImportError("stop at first")
 
         monkeypatch.setattr(bootstrap, "_import_extension", rec)
-        native = tmp_path / "native"
-        native.mkdir()
+        native = self._native_dir(tmp_path)
+        native.mkdir(parents=True)
         (native / "_native_zzz.pyd").write_bytes(b"x")
         (native / "_native_aaa.so").write_bytes(b"x")
         bootstrap.try_load_cached(tmp_path)
         assert seen[0] == "_native_aaa.so"
+
+    def test_module_names_follow_local_package(self, monkeypatch):
+        monkeypatch.setattr(bootstrap, "__package__", "unified_chat.native")
+        assert bootstrap._module_names() == (
+            "unified_chat._native",
+            "unified_chat.native",
+        )
+
+    def test_module_names_follow_astrbot_package(self, monkeypatch):
+        monkeypatch.setattr(
+            bootstrap,
+            "__package__",
+            "data.plugins.astrbot_plugin_unified_chat.unified_chat.native",
+        )
+        assert bootstrap._module_names() == (
+            "data.plugins.astrbot_plugin_unified_chat.unified_chat._native",
+            "data.plugins.astrbot_plugin_unified_chat.unified_chat.native",
+        )
+
+    def test_cache_writer_and_loader_share_root(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(
+            "unified_chat.utils.path.resolve_data_dir", lambda raw, context: tmp_path
+        )
+        monkeypatch.setattr(bootstrap, "plugin_version", lambda: "0.1.0")
+        assert bootstrap.default_cache_dir() == tmp_path
+        assert bootstrap.cache_dir() == tmp_path / "native" / "0.1.0"
 
 
 class TestFacadeFallbackIntact:
@@ -228,6 +258,34 @@ class TestPrefetch:
 
         await bootstrap.prefetch()
         assert not list(tmp_path.glob("_native*"))
+
+    async def test_corrupt_cache_does_not_prevent_redownload(
+        self, tmp_path, monkeypatch
+    ):
+        import hashlib
+
+        version_dir = tmp_path / "native" / "0.1.0"
+        version_dir.mkdir(parents=True)
+        (version_dir / "_native_broken.pyd").write_bytes(b"garbage")
+        wheel = _make_wheel("unified_chat/_native.cp312-abi3-win_amd64.pyd")
+        digest = hashlib.sha256(wheel).hexdigest()
+        asset = "astrbot_plugin_unified_chat-0.1.0-cp312-abi3-win_amd64.whl"
+        fetched = []
+
+        async def fake_fetch(url):
+            fetched.append(url)
+            if url.endswith(asset):
+                return wheel
+            return f"{digest}  {asset}\n".encode()
+
+        monkeypatch.setattr(bootstrap, "_fetch", fake_fetch)
+        monkeypatch.setattr(bootstrap, "default_cache_dir", lambda: tmp_path)
+        monkeypatch.setattr(bootstrap, "plugin_version", lambda: "0.1.0")
+        monkeypatch.setattr(bootstrap.sys, "platform", "win32")
+        monkeypatch.setattr(bootstrap.platform, "machine", lambda: "AMD64")
+        await bootstrap.prefetch()
+        assert len(fetched) == 2
+        assert list(version_dir.glob("_native*.pyd"))
 
     async def test_prefetch_async_disabled(self):
         assert bootstrap.prefetch_async(False) is None

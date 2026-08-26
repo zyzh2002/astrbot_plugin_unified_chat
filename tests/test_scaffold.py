@@ -13,6 +13,9 @@ def _install_astrbot_stubs():
             class EventMessageType:
                 ALL = "all"
 
+            class PermissionType:
+                ADMIN = "admin"
+
             def event_message_type(self, _):
                 def deco(fn):
                     return fn
@@ -31,6 +34,12 @@ def _install_astrbot_stubs():
 
                 return deco
 
+            def permission_type(self, *_a, **_kw):
+                def deco(fn):
+                    return fn
+
+                return deco
+
         mod.filter = DummyFilter()
         mod.AstrMessageEvent = object
         sys.modules["astrbot.api.event"] = mod
@@ -39,8 +48,9 @@ def _install_astrbot_stubs():
         mod = types.ModuleType("astrbot.api.star")
 
         class Star:
-            def __init__(self, context):
+            def __init__(self, context, config=None):
                 self.context = context
+                self.config = config
 
         class Context:
             pass
@@ -89,3 +99,25 @@ def test_conf_schema_is_valid_flat_json():
     for key, item in schema.items():
         assert isinstance(item, dict), f"{key} not a flat item"
         assert item.get("type") in valid_types, f"{key} has invalid type"
+
+
+def test_repository_versions_are_consistent():
+    import re
+    import tomllib
+    from pathlib import Path
+
+    project = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))[
+        "project"
+    ]["version"]
+    cargo = tomllib.loads(Path("rust/Cargo.toml").read_text(encoding="utf-8"))[
+        "package"
+    ]["version"]
+    metadata = re.search(
+        r"(?m)^version:\s*([^\s#]+)",
+        Path("metadata.yaml").read_text(encoding="utf-8"),
+    ).group(1).strip("\"'")
+    package = re.search(
+        r'(?m)^__version__\s*=\s*["\']([^"\']+)',
+        Path("unified_chat/__init__.py").read_text(encoding="utf-8"),
+    ).group(1)
+    assert project == cargo == metadata == package

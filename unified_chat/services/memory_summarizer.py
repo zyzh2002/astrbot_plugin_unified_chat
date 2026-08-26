@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import json
 import re
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from ..storage import repo as repos
@@ -54,9 +55,15 @@ def parse_summary_items(raw: str) -> list[tuple[str, str]]:
 class MemorySummarizer:
     """Batch-summarizes captured messages into memory atoms (fail-silent)."""
 
-    def __init__(self, context: Any, config: Any):
+    def __init__(
+        self,
+        context: Any,
+        config: Any,
+        store_atom: Callable[..., Awaitable[tuple[Memory, bool]]] | None = None,
+    ):
         self.context = context
         self.config = config
+        self._store_atom = store_atom
         self._counters: dict[str, int] = {}
 
     def observe(self, umo: str) -> bool:
@@ -79,10 +86,14 @@ class MemorySummarizer:
             return 0
 
     async def summarize_session(self, umo: str) -> int:
+        if not getattr(self.config, "enable_persistent_memory", True):
+            return 0
+        batch = int(getattr(self.config, "summary_batch_size", 10) or 0)
+        if batch <= 0:
+            return 0
         llm_generate = getattr(self.context, "llm_generate", None)
         if llm_generate is None:
             return 0
-        batch = int(getattr(self.config, "summary_batch_size", 10) or 10)
         rows = await repos.MessageSessionRepo.list_recent_by_session(umo, batch)
         if len(rows) < max(2, min(batch, 3)):
             return 0
@@ -97,24 +108,34 @@ class MemorySummarizer:
             raw = (getattr(resp, "completion_text", "") or "").strip()
         stored = 0
         for content, mtype in parse_summary_items(raw):
-            dedup = ChatService.hash_of(content)
             with contextlib.suppress(Exception):
-                if await repos.MemoryRepo.exists_hash(dedup):
-                    continue
-                from datetime import UTC, datetime, timedelta
-
-                await repos.MemoryRepo.add(
-                    Memory(
-                        content=content,
-                        importance=0.6,
+                if self._store_atom is not None:
+                    _memory, created = await self._store_atom(
+                        content,
                         source="summary",
-                        dedup_hash=dedup,
-                        memory_type=mtype,
+                        importance=0.6,
                         session_id=umo,
-                        expires_at=datetime.now(UTC) + timedelta(days=ttl_for(mtype)),
+                        mtype=mtype,
                     )
-                )
-                stored += 1
+                    stored += int(created)
+                else:
+                    dedup = ChatService.hash_of(content)
+                    if await repos.MemoryRepo.exists_hash(dedup):
+                        continue
+                    from datetime import UTC, datetime, timedelta
+
+                    await repos.MemoryRepo.add(
+                        Memory(
+                            content=content,
+                            importance=0.6,
+                            source="summary",
+                            dedup_hash=dedup,
+                            memory_type=mtype,
+                            session_id=umo,
+                            expires_at=datetime.now(UTC) + timedelta(days=ttl_for(mtype)),
+                        )
+                    )
+                    stored += 1
         return stored
 
     @staticmethod

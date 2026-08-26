@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from datetime import datetime
 
-from sqlalchemy import func, text
+from sqlalchemy import and_, func, or_, text
 from sqlmodel import select
 
 from .database import get_session
@@ -20,6 +20,16 @@ _FTS_DDL = (
 def _fts_match_expr(query: str) -> str:
     tokens = re.findall(r"\w+", query)[:8]
     return " OR ".join(f'"{token}"' for token in tokens)
+
+
+def _active_clause(now: datetime):
+    return or_(Memory.expires_at.is_(None), Memory.expires_at > now)
+
+
+def _visible_clause(session_id: str, isolation: bool):
+    if not isolation:
+        return Memory.id.is_not(None)
+    return or_(Memory.session_id == "", Memory.session_id == session_id)
 
 
 class MessageRepo:
@@ -60,6 +70,41 @@ class MemoryRepo:
             return memory
 
     @staticmethod
+    async def add_unique(memory: Memory) -> tuple[Memory, bool]:
+        async with get_session() as session:
+            result = await session.exec(
+                text(
+                    "INSERT OR IGNORE INTO memories("
+                    "content, importance, source, dedup_hash, kb_doc_id, access_count, "
+                    "memory_type, session_id, reinforce_count, created_at, "
+                    "last_accessed_at, expires_at) VALUES ("
+                    ":content, :importance, :source, :dedup_hash, NULL, 0, :memory_type, "
+                    ":session_id, 0, :created_at, :last_accessed_at, :expires_at)"
+                ),
+                params={
+                    "content": memory.content,
+                    "importance": memory.importance,
+                    "source": memory.source,
+                    "dedup_hash": memory.dedup_hash,
+                    "memory_type": memory.memory_type,
+                    "session_id": memory.session_id,
+                    "created_at": memory.created_at,
+                    "last_accessed_at": memory.last_accessed_at,
+                    "expires_at": memory.expires_at,
+                },
+            )
+            await session.commit()
+            rows = (
+                await session.exec(
+                    select(Memory)
+                    .where(Memory.dedup_hash == memory.dedup_hash)
+                    .where(Memory.session_id == memory.session_id)
+                    .limit(1)
+                )
+            ).all()
+            return rows[0], bool(result.rowcount)
+
+    @staticmethod
     async def list_all() -> list[Memory]:
         async with get_session() as session:
             result = await session.exec(select(Memory))
@@ -88,12 +133,21 @@ class MemoryRepo:
 
     @staticmethod
     async def list_expired(threshold: float, cutoff: datetime) -> list[Memory]:
+        now = datetime.now(cutoff.tzinfo) if cutoff.tzinfo else datetime.now()
         async with get_session() as session:
             rows = (
                 await session.exec(
                     select(Memory)
-                    .where(Memory.importance < threshold)
-                    .where(Memory.created_at < cutoff)
+                    .where(
+                        or_(
+                            Memory.expires_at <= now,
+                            and_(
+                                Memory.expires_at.is_(None),
+                                Memory.importance < threshold,
+                                Memory.created_at < cutoff,
+                            ),
+                        )
+                    )
                 )
             ).all()
             return list(rows)
@@ -116,13 +170,23 @@ class MemoryRepo:
             return len(rows)
 
     @staticmethod
-    async def search_by_keyword(keyword: str, limit: int = 5) -> list[Memory]:
+    async def search_by_keyword(
+        keyword: str,
+        limit: int = 5,
+        *,
+        session_id: str = "",
+        isolation: bool = True,
+        now: datetime | None = None,
+    ) -> list[Memory]:
         escaped = keyword.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        now = now or datetime.now()
         async with get_session() as session:
             rows = (
                 await session.exec(
                     select(Memory)
                     .where(Memory.content.like(f"%{escaped}%", escape="\\"))
+                    .where(_active_clause(now))
+                    .where(_visible_clause(session_id, isolation))
                     .order_by(Memory.importance.desc())
                     .limit(limit)
                 )
@@ -187,7 +251,7 @@ class MemoryFts:
 
     @staticmethod
     async def _ensure_table(session) -> None:
-        await session.execute(text(_FTS_DDL))
+        await session.exec(text(_FTS_DDL))
 
     @staticmethod
     async def index_add(memory_id: int | None, content: str, session_id: str) -> None:
@@ -196,12 +260,16 @@ class MemoryFts:
         try:
             async with get_session() as session:
                 await MemoryFts._ensure_table(session)
-                await session.execute(
+                await session.exec(
                     text(
                         "INSERT INTO memory_fts(memory_id, content, session_id) "
                         "VALUES (:mid, :content, :sid)"
                     ),
-                    {"mid": int(memory_id), "content": content, "sid": session_id or ""},
+                    params={
+                        "mid": int(memory_id),
+                        "content": content,
+                        "sid": session_id or "",
+                    },
                 )
                 await session.commit()
         except Exception:
@@ -212,31 +280,50 @@ class MemoryFts:
         try:
             async with get_session() as session:
                 await MemoryFts._ensure_table(session)
-                await session.execute(
+                await session.exec(
                     text("DELETE FROM memory_fts WHERE memory_id = :mid"),
-                    {"mid": int(memory_id)},
+                    params={"mid": int(memory_id)},
                 )
                 await session.commit()
         except Exception:
             pass
 
     @staticmethod
-    async def search(query: str, limit: int = 10) -> list[tuple[int, float]]:
+    async def search(
+        query: str,
+        limit: int = 10,
+        *,
+        session_id: str = "",
+        isolation: bool = True,
+        now: datetime | None = None,
+    ) -> list[tuple[int, float]]:
         """Return (memory_id, bm25_rank) hits, best first. Never raises."""
         if not query.strip():
             return []
         expr = _fts_match_expr(query)
         if not expr:
             return []
+        now = now or datetime.now()
         try:
             async with get_session() as session:
                 await MemoryFts._ensure_table(session)
-                result = await session.execute(
+                result = await session.exec(
                     text(
-                        "SELECT memory_id, bm25(memory_fts) FROM memory_fts "
-                        "WHERE memory_fts MATCH :expr ORDER BY rank LIMIT :lim"
+                        "SELECT memory_fts.memory_id, bm25(memory_fts) FROM memory_fts "
+                        "JOIN memories ON memories.id = memory_fts.memory_id "
+                        "WHERE memory_fts MATCH :expr "
+                        "AND (memories.expires_at IS NULL OR memories.expires_at > :now) "
+                        "AND (:isolation = 0 OR memories.session_id = '' "
+                        "OR memories.session_id = :sid) "
+                        "ORDER BY bm25(memory_fts) LIMIT :lim"
                     ),
-                    {"expr": expr, "lim": int(limit)},
+                    params={
+                        "expr": expr,
+                        "lim": int(limit),
+                        "now": now,
+                        "isolation": 1 if isolation else 0,
+                        "sid": session_id,
+                    },
                 )
                 rows = result.fetchall()
             return [(int(row[0]), float(row[1])) for row in rows]
@@ -248,12 +335,24 @@ class MemoryHybridRepo:
     """Read-side helpers spanning multiple sparse sources."""
 
     @staticmethod
-    async def get_by_ids(ids: list[int]) -> list[Memory]:
+    async def get_by_ids(
+        ids: list[int],
+        *,
+        session_id: str = "",
+        isolation: bool = True,
+        now: datetime | None = None,
+    ) -> list[Memory]:
         if not ids:
             return []
+        now = now or datetime.now()
         async with get_session() as session:
             rows = (
-                await session.exec(select(Memory).where(Memory.id.in_(ids)))
+                await session.exec(
+                    select(Memory)
+                    .where(Memory.id.in_(ids))
+                    .where(_active_clause(now))
+                    .where(_visible_clause(session_id, isolation))
+                )
             ).all()
             return list(rows)
 
@@ -289,14 +388,64 @@ class MemoryLookupRepo:
     """Single-row memory lookups."""
 
     @staticmethod
-    async def get_by_hash(h: str) -> Memory | None:
+    async def get_by_hash(
+        h: str,
+        *,
+        session_id: str = "",
+        isolation: bool = True,
+    ) -> Memory | None:
         if not h:
             return None
         async with get_session() as session:
             rows = (
-                await session.exec(select(Memory).where(Memory.dedup_hash == h).limit(1))
+                await session.exec(
+                    select(Memory)
+                    .where(Memory.dedup_hash == h)
+                    .where(_active_clause(datetime.now()))
+                    .where(_visible_clause(session_id, isolation))
+                    .limit(1)
+                )
             ).all()
             return rows[0] if rows else None
+
+    @staticmethod
+    async def get_visible_by_id(
+        memory_id: int,
+        *,
+        session_id: str,
+        isolation: bool,
+    ) -> Memory | None:
+        async with get_session() as session:
+            rows = (
+                await session.exec(
+                    select(Memory)
+                    .where(Memory.id == memory_id)
+                    .where(_active_clause(datetime.now()))
+                    .where(_visible_clause(session_id, isolation))
+                    .limit(1)
+                )
+            ).all()
+            return rows[0] if rows else None
+
+    @staticmethod
+    async def get_visible_by_kb_doc_ids(
+        doc_ids: list[str],
+        *,
+        session_id: str,
+        isolation: bool,
+    ) -> dict[str, Memory]:
+        if not doc_ids:
+            return {}
+        async with get_session() as session:
+            rows = (
+                await session.exec(
+                    select(Memory)
+                    .where(Memory.kb_doc_id.in_(doc_ids))
+                    .where(_active_clause(datetime.now()))
+                    .where(_visible_clause(session_id, isolation))
+                )
+            ).all()
+            return {str(row.kb_doc_id): row for row in rows if row.kb_doc_id}
 
 
 class MemoryAdminRepo:
@@ -316,14 +465,20 @@ class MemoryAdminRepo:
 
     @staticmethod
     async def delete_by_session(session_id: str) -> int:
-        if not session_id:
-            return 0
         async with get_session() as session:
             rows = (
                 await session.exec(select(Memory).where(Memory.session_id == session_id))
             ).all()
             ids = [row.id for row in rows if row.id is not None]
         return await MemoryRepo.delete_by_ids(ids)
+
+    @staticmethod
+    async def list_by_session(session_id: str) -> list[Memory]:
+        async with get_session() as session:
+            rows = (
+                await session.exec(select(Memory).where(Memory.session_id == session_id))
+            ).all()
+            return list(rows)
 
 
 class MessageScanRepo:
@@ -349,6 +504,22 @@ class MessageScanRepo:
                     result.append((str(umo), 0.0))
             return result
 
+    @staticmethod
+    async def distinct_group_umos(limit: int = 50) -> list[tuple[str, float]]:
+        async with get_session() as session:
+            rows = (
+                await session.exec(
+                    select(MessageRecord.umo, func.max(MessageRecord.created_at))
+                    .where(MessageRecord.group_id != "")
+                    .group_by(MessageRecord.umo)
+                    .limit(limit)
+                )
+            ).all()
+            return [
+                (str(umo), float(last_ts.timestamp()) if hasattr(last_ts, "timestamp") else 0.0)
+                for umo, last_ts in rows
+            ]
+
 
 class SlangRepo:
     """Persistence for slang candidates/meanings."""
@@ -362,10 +533,13 @@ class SlangRepo:
             return term_row
 
     @staticmethod
-    async def exists_term(term: str) -> bool:
+    async def exists_term(term: str, umo: str) -> bool:
         async with get_session() as session:
             result = await session.exec(
-                select(SlangTerm.id).where(SlangTerm.term == term).limit(1)
+                select(SlangTerm.id)
+                .where(SlangTerm.term == term)
+                .where(SlangTerm.umo == umo)
+                .limit(1)
             )
             return result.first() is not None
 
@@ -388,6 +562,21 @@ class SlangRepo:
             rows = (
                 await session.exec(
                     select(SlangTerm).where(SlangTerm.status == "confirmed")
+                )
+            ).all()
+            return list(rows)
+
+    @staticmethod
+    async def confirmed_for_umo(umo: str, limit: int = 100) -> list[SlangTerm]:
+        if not umo:
+            return []
+        async with get_session() as session:
+            rows = (
+                await session.exec(
+                    select(SlangTerm)
+                    .where(SlangTerm.status == "confirmed")
+                    .where(SlangTerm.umo == umo)
+                    .limit(limit)
                 )
             ).all()
             return list(rows)
@@ -419,20 +608,25 @@ class AffinityRepo:
     @staticmethod
     async def bump(umo: str, user_id: str, delta: float = 1.0) -> float:
         async with get_session() as session:
-            rows = (
-                await session.exec(
-                    select(UserAffinity)
-                    .where(UserAffinity.umo == umo)
-                    .where(UserAffinity.user_id == user_id)
-                    .limit(1)
-                )
-            ).all()
-            row = rows[0] if rows else UserAffinity(umo=umo, user_id=user_id)
-            row.score = max(0.0, min(100.0, float(row.score) + delta))
-            session.add(row)
+            await session.exec(
+                text(
+                    "INSERT INTO user_affinity(umo, user_id, score, updated_at) "
+                    "VALUES (:umo, :uid, MAX(0, MIN(100, 50 + :delta)), CURRENT_TIMESTAMP) "
+                    "ON CONFLICT(umo, user_id) DO UPDATE SET "
+                    "score = MAX(0, MIN(100, user_affinity.score + :delta)), "
+                    "updated_at = CURRENT_TIMESTAMP"
+                ),
+                params={"umo": umo, "uid": user_id, "delta": float(delta)},
+            )
             await session.commit()
-            await session.refresh(row)
-            return float(row.score)
+            result = await session.exec(
+                text(
+                    "SELECT score FROM user_affinity "
+                    "WHERE umo = :umo AND user_id = :uid"
+                ),
+                params={"umo": umo, "uid": user_id},
+            )
+            return float(result.scalar_one())
 
     @staticmethod
     async def all_rows(limit: int = 500) -> list[UserAffinity]:

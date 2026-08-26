@@ -12,7 +12,7 @@ class SessionGateState:
     last_reply_ts: float = 0.0
     last_message_ts: float = 0.0
     consecutive_replies: int = 0
-    attention: dict[str, float] = field(default_factory=dict)
+    attention: dict[str, tuple[float, float]] = field(default_factory=dict)
 
 
 class AttentionTracker:
@@ -26,14 +26,14 @@ class AttentionTracker:
 
     def bump(self, state: SessionGateState, user: str, now: float) -> None:
         current = self.decayed(state, user, now)
-        state.attention[user] = min(1.0, current + 0.25)
+        state.attention[user] = (min(1.0, current + 0.25), now)
         state.last_message_ts = now
 
     def decayed(self, state: SessionGateState, user: str, now: float) -> float:
-        value = state.attention.get(user, 0.0)
+        value, updated_at = state.attention.get(user, (0.0, now))
         if value <= 0.0:
             return 0.0
-        elapsed = max(0.0, now - state.last_message_ts)
+        elapsed = max(0.0, now - updated_at)
         return value * self._decay_factor(elapsed)
 
 

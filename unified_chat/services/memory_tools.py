@@ -11,7 +11,7 @@ RECALL_TOOL_NAME = "unified_chat_memory_recall"
 MEMORIZE_TOOL_NAME = "unified_chat_memory_memorize"
 
 
-def build_memory_tools(memory_service: Any) -> list[Any]:
+def build_memory_tools(memory_service: Any, session_id: str) -> list[Any]:
     """Build recall/memorize FunctionTools bound to the memory service.
 
     Returns [] when the astrbot tool API is unavailable.
@@ -53,7 +53,11 @@ def build_memory_tools(memory_service: Any) -> list[Any]:
                 return "error: empty query"
             try:
                 k = int(kwargs.get("k", 5) or 5)
-                hits = await service.retrieve_hybrid(query, top_k=max(1, min(k, 20)))
+                hits = await service.retrieve_hybrid(
+                    query,
+                    session_id=session_id,
+                    top_k=max(1, min(k, 20)),
+                )
             except Exception as exc:
                 return f"error: {exc}"
             if not hits:
@@ -92,6 +96,7 @@ def build_memory_tools(memory_service: Any) -> list[Any]:
                     text,
                     source="agent",
                     mtype=classify_memory(text),
+                    session_id=session_id,
                 )
             except Exception as exc:
                 return f"error: {exc}"
@@ -102,10 +107,11 @@ def build_memory_tools(memory_service: Any) -> list[Any]:
 
 async def inject_memory_tools(event: Any, req: Any, config: Any, memory_service: Any) -> None:
     """Add memory tools into req.func_tool; never raises."""
-    if not config.enable_persistent_memory:
+    if not config.enable_persistent_memory or not config.rag_agentic:
         return
     try:
-        tools = build_memory_tools(memory_service)
+        session_id = getattr(event, "unified_msg_origin", "") or ""
+        tools = build_memory_tools(memory_service, session_id)
         if not tools:
             return
         func_tool = getattr(req, "func_tool", None)

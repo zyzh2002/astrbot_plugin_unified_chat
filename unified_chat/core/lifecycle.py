@@ -17,9 +17,15 @@ from ..config import PluginConfig
 class PluginLifecycle:
     """Orchestrates all internal services. Keeps main.py thin."""
 
-    def __init__(self, plugin: Star, context: Context):
+    def __init__(
+        self,
+        plugin: Star,
+        context: Context,
+        raw_config: dict | None = None,
+    ):
         self.plugin = plugin
         self.context = context
+        self._raw_config = raw_config
         self._status = "created"
         self._config: PluginConfig | None = None
         self._data_dir: Path | None = None
@@ -35,30 +41,17 @@ class PluginLifecycle:
         self._prefetch_task: Any | None = None
         self._backup_service: Any | None = None
         self._humanize: Any | None = None
-        self._pending_merge: dict[str, str] = {}
         self._proactive: Any | None = None
         self._learning_jobs: Any | None = None
 
     async def on_load(self):
         try:
-            raw: dict = {}
-            # Try several defensively-known config sources.
-            for getter in (
-                lambda: getattr(self.context, "get_config", lambda: None)(),
-                lambda: getattr(self.plugin, "config", None),
-                lambda: getattr(self.context, "config", None),
-            ):
-                try:
-                    val = getter()
-                    if isinstance(val, dict) and val:
-                        raw = val
-                        break
-                    if isinstance(val, dict):
-                        raw = val
-                except Exception:
-                    continue
-            if not isinstance(raw, dict):
-                raw = {}
+            raw = self._raw_config
+            if raw is None:
+                candidate = getattr(self.plugin, "config", None)
+                if not isinstance(candidate, dict):
+                    candidate = getattr(self.context, "get_config", lambda: {})()
+                raw = candidate if isinstance(candidate, dict) else {}
 
             from ..utils.path import resolve_data_dir
 
@@ -67,10 +60,15 @@ class PluginLifecycle:
             self._config = config
             self._data_dir = data_dir
 
+            from ..services.backup_service import BackupService
             from ..storage.database import get_engine
 
             db_path = data_dir / "unified_chat.db"
-            await get_engine(db_path)
+            self._backup_service = BackupService(config, db_path)
+            await get_engine(
+                db_path,
+                before_migrate=lambda: self._backup_service.run_backup("schema_v1"),
+            )
             self._status = "loaded"
 
             from ..services.rag_service import RagService
@@ -89,7 +87,11 @@ class PluginLifecycle:
 
             from ..services.learning_service import LearningService
 
-            self._learning_service = LearningService(self.context, config)
+            self._learning_service = LearningService(
+                self.context,
+                config,
+                self._memory_service.store_atom,
+            )
 
             self._pipeline = MessagePipeline(
                 config, self._chat_service, self._memory_service, self._learning_service
@@ -106,7 +108,11 @@ class PluginLifecycle:
             from ..services.learning_jobs import DailyLearningJobs
             from .cron import MemoryCleanupCron
 
-            self._learning_jobs = DailyLearningJobs(self.context, config)
+            self._learning_jobs = DailyLearningJobs(
+                self.context,
+                config,
+                self._memory_service,
+            )
             self._cron = MemoryCleanupCron(
                 self._memory_service,
                 backup_service=self._backup_service,
@@ -130,9 +136,6 @@ class PluginLifecycle:
 
             self._migration_service = MigrationService(self.context, config)
 
-            from ..services.backup_service import BackupService
-
-            self._backup_service = BackupService(config, db_path)
             try:
                 from ..native.bootstrap import plugin_version
 
@@ -160,18 +163,28 @@ class PluginLifecycle:
     async def on_unload(self):
         with contextlib.suppress(Exception):
             if self._cron is not None:
-                self._cron.stop()
+                await self._cron.stop()
         with contextlib.suppress(Exception):
             if self._proactive is not None:
-                self._proactive.stop()
+                await self._proactive.stop()
+        with contextlib.suppress(Exception):
+            if self._pipeline is not None:
+                await self._pipeline.shutdown()
+        migration_tasks = [task for task in self._migration_tasks if not task.done()]
+        for task in migration_tasks:
+            task.cancel()
+        if migration_tasks:
+            with contextlib.suppress(Exception):
+                await asyncio.gather(*migration_tasks, return_exceptions=True)
+        if self._prefetch_task is not None:
+            with contextlib.suppress(Exception):
+                self._prefetch_task.cancel()
+                await asyncio.gather(self._prefetch_task, return_exceptions=True)
+            self._prefetch_task = None
         with contextlib.suppress(Exception):
             from ..storage.database import close_engine
 
             await close_engine()
-        if self._prefetch_task is not None:
-            with contextlib.suppress(Exception):
-                self._prefetch_task.cancel()
-            self._prefetch_task = None
         self._status = "unloaded"
 
     async def handle_message(self, event: AstrMessageEvent):
@@ -185,13 +198,12 @@ class PluginLifecycle:
                     event.stop_event()
                     return
                 outcome = await self._humanize.process(event)
-                umo = getattr(event, "unified_msg_origin", "") or ""
                 if not outcome.allow:
                     event.stop_event()
                     if outcome.reason == "blacklisted":
                         return  # blacklisted users leave no trace
                 elif outcome.merged_context:
-                    self._pending_merge[umo] = outcome.merged_context
+                    event._unified_chat_merge = outcome.merged_context
             except Exception:
                 with contextlib.suppress(Exception):
                     from astrbot.api import logger  # type: ignore
@@ -223,8 +235,9 @@ class PluginLifecycle:
                 from .hooks import inject_social_context
 
                 await inject_social_context(event, req, self._config, self._chat_service)
-                umo = getattr(event, "unified_msg_origin", "") or ""
-                merged = self._pending_merge.pop(umo, "")
+                merged = getattr(event, "_unified_chat_merge", "")
+                with contextlib.suppress(Exception):
+                    delattr(event, "_unified_chat_merge")
                 if merged:
                     contexts = getattr(req, "contexts", None)
                     if contexts is None:
@@ -269,11 +282,7 @@ class PluginLifecycle:
             sender = ""
             with contextlib.suppress(Exception):
                 sender = str(event.get_sender_id() or "")
-            slang_terms = [
-                t
-                for t in await repos.SlangRepo.confirmed_all()
-                if (t.umo or "") in ("", umo)
-            ][:100]
+            slang_terms = await repos.SlangRepo.confirmed_for_umo(umo, limit=100)
             affinity = None
             if getattr(self._config, "enable_affinity", True) and umo and sender:
                 affinity = await repos.AffinityLookupRepo.get_score(umo, sender)
@@ -300,6 +309,7 @@ class PluginLifecycle:
             return "[umem] Plugin not initialized"
         action = (action or "").strip().lower()
         arg = (arg or "").strip()
+        session_id = self._memory_service.session_id_for(event)
         if action in ("", "help"):
             return (
                 "[umem] Usage:\n"
@@ -325,16 +335,18 @@ class PluginLifecycle:
             if action == "search":
                 if not arg:
                     return "[umem] Usage: /umem search <query>"
-                hits = await self._memory_service.retrieve_hybrid(arg, top_k=5)
+                hits = await self._memory_service.retrieve_hybrid(
+                    arg,
+                    session_id=session_id,
+                    top_k=5,
+                )
                 if not hits:
                     return "[umem] no matches"
                 return "\n".join(f"[{m.id}] ({m.memory_type}) {m.content}" for m in hits)
             if action == "forget":
-                from ..storage import repo as repos
-
                 if not arg.isdigit():
                     return "[umem] Usage: /umem forget <id>"
-                removed = await repos.MemoryRepo.delete_by_ids([int(arg)])
+                removed = await self._memory_service.forget(int(arg), session_id)
                 return f"[umem] deleted {removed}"
             if action == "backup":
                 if self._backup_service is None:
@@ -342,10 +354,7 @@ class PluginLifecycle:
                 dest = self._backup_service.run_backup("manual")
                 return f"[umem] backup -> {dest.name}" if dest else "[umem] backup failed"
             if action == "reset":
-                from ..storage import repo as repos
-
-                umo = getattr(event, "unified_msg_origin", "") or ""
-                removed = await repos.MemoryAdminRepo.delete_by_session(umo)
+                removed = await self._memory_service.forget_session(session_id)
                 return f"[umem] cleared {removed} memories for this session"
             return "[umem] unknown action; try /umem help"
         except Exception as exc:  # pragma: no cover - defensive

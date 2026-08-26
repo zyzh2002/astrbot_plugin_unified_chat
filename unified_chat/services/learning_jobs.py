@@ -41,9 +41,16 @@ async def set_mood(scalar: float) -> None:
 class DailyLearningJobs:
     """Runs affinity decay, mood drift, slang refresh, persona suggestions."""
 
-    def __init__(self, context: Any, config: Any, rng: random.Random | None = None):
+    def __init__(
+        self,
+        context: Any,
+        config: Any,
+        memory_service: Any | None = None,
+        rng: random.Random | None = None,
+    ):
         self.context = context
         self.config = config
+        self.memory_service = memory_service
         self.rng = rng or random.Random()
 
     async def run(self) -> dict[str, int]:
@@ -69,10 +76,16 @@ class DailyLearningJobs:
         if getattr(self.config, "persona_auto_suggest", False):
             from .persona_review import PersonaReviewService
 
-            review = PersonaReviewService(self.context, self.config)
+            review = PersonaReviewService(
+                self.context,
+                self.config,
+                self.memory_service,
+            )
             with contextlib.suppress(Exception):
-                suggested = await review.maybe_suggest()
-                results["persona_suggested"] = 1 if suggested else 0
+                sessions = await repos.MessageScanRepo.distinct_group_umos(limit=10)
+                for session_id, _last_ts in sessions:
+                    suggested = await review.maybe_suggest(session_id)
+                    results["persona_suggested"] += int(bool(suggested))
         return results
 
     async def _decay_affinity(self) -> int:

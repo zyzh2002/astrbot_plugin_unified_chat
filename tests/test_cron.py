@@ -43,12 +43,35 @@ async def test_tick_survives_failure():
 
 
 @pytest.mark.asyncio
+async def test_tick_runs_backup_and_learning_jobs():
+    backup_calls = []
+    job_calls = []
+
+    class Backup:
+        async def daily_tick(self):
+            backup_calls.append(True)
+
+    class Jobs:
+        async def run(self):
+            job_calls.append(True)
+
+    cron = MemoryCleanupCron(
+        FakeMemoryService(),
+        backup_service=Backup(),
+        learning_jobs=Jobs(),
+    )
+    assert await cron._tick() == 3
+    assert backup_calls == [True]
+    assert job_calls == [True]
+
+
+@pytest.mark.asyncio
 async def test_stop_idempotent_and_cancels():
     svc = FakeMemoryService()
     cron = MemoryCleanupCron(svc)
     cron.start()
     await asyncio.sleep(0.01)
     assert cron._task is not None
-    cron.stop()
-    cron.stop()
+    await cron.stop()
+    await cron.stop()
     assert cron._task is None

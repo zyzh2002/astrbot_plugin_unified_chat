@@ -98,7 +98,7 @@ class SlangService:
                 rows = await repos.MessageSessionRepo.list_recent_by_session(umo, 500)
                 texts = [r.content for r in rows]
                 for term, count in mine_terms(texts, top_k=top_k, min_count=min_count):
-                    if await repos.SlangRepo.exists_term(term):
+                    if await repos.SlangRepo.exists_term(term, umo):
                         continue
                     await repos.SlangRepo.add(
                         SlangTerm(term=term, umo=umo, count=count)
@@ -120,37 +120,38 @@ class SlangService:
         ):
             return 0
         try:
-            pending = await repos.SlangRepo.list_by_status("candidate", limit=10)
+            pending = await repos.SlangRepo.list_by_status("candidate", limit=50)
             if not pending:
                 return 0
-            samples = await self._sample_lines()
-            listing = "\n".join(f"- {t.term} (x{t.count})" for t in pending)
-            resp = await llm_generate(
-                chat_provider_id=provider_id,
-                prompt=f"Terms:\n{listing}\n\nRecent messages:\n{samples}",
-                system_prompt=INFER_SYSTEM_PROMPT,
-            )
-            raw = (getattr(resp, "completion_text", "") or "").strip()
-            meanings = parse_meanings(raw)
             updated = 0
-            for term_obj in pending:
-                meaning = meanings.get(term_obj.term)
-                if meaning:
-                    await repos.SlangRepo.set_meaning(term_obj.id, meaning)
-                    updated += 1
+            grouped: dict[str, list[SlangTerm]] = {}
+            for item in pending:
+                grouped.setdefault(item.umo, []).append(item)
+            for umo, items in grouped.items():
+                batch = items[:10]
+                samples = await self._sample_lines(umo)
+                listing = "\n".join(f"- {t.term} (x{t.count})" for t in batch)
+                resp = await llm_generate(
+                    chat_provider_id=provider_id,
+                    prompt=f"Terms:\n{listing}\n\nRecent messages:\n{samples}",
+                    system_prompt=INFER_SYSTEM_PROMPT,
+                )
+                raw = (getattr(resp, "completion_text", "") or "").strip()
+                meanings = parse_meanings(raw)
+                for term_obj in batch:
+                    meaning = meanings.get(term_obj.term)
+                    if meaning:
+                        await repos.SlangRepo.set_meaning(term_obj.id, meaning)
+                        updated += 1
             return updated
         except Exception:
             self._log_error("infer_pending")
             return 0
 
-    async def _sample_lines(self) -> str:
+    async def _sample_lines(self, umo: str) -> str:
         try:
-            sessions = await repos.MessageScanRepo.distinct_umos(limit=3)
-            lines: list[str] = []
-            for umo, _ in sessions:
-                rows = await repos.MessageSessionRepo.list_recent_by_session(umo, 20)
-                lines.extend(r.content[:60] for r in rows if r.content.strip())
-            return "\n".join(lines[:40])
+            rows = await repos.MessageSessionRepo.list_recent_by_session(umo, 20)
+            return "\n".join(r.content[:60] for r in rows if r.content.strip())
         except Exception:
             return ""
 

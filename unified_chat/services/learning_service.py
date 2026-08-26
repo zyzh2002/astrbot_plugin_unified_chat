@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from ..storage import repo as repos
@@ -24,9 +25,15 @@ class LearningService:
 
     MIN_LEARN_CHARS = 8
 
-    def __init__(self, context: Any, config: Any):
+    def __init__(
+        self,
+        context: Any,
+        config: Any,
+        store_atom: Callable[..., Awaitable[tuple[Memory, bool]]] | None = None,
+    ):
         self.context = context
         self.config = config
+        self._store_atom = store_atom
         self._semaphore = asyncio.Semaphore(2)
 
     def should_learn(self, event: Any) -> bool:
@@ -61,20 +68,19 @@ class LearningService:
                 return
             text = event.message_str
             h = dedup_hash(text)
-            if await repos.MessageRepo.exists_hash(h):
-                return
-            group_id = ""
-            with contextlib.suppress(Exception):
-                group_id = str(event.get_group_id() or "")
-            await repos.MessageRepo.add(
-                MessageRecord(
-                    umo=event.unified_msg_origin,
-                    sender_id=sender_id,
-                    group_id=group_id,
-                    content=text,
-                    dedup_hash=h,
+            if not await repos.MessageRepo.exists_hash(h):
+                group_id = ""
+                with contextlib.suppress(Exception):
+                    group_id = str(event.get_group_id() or "")
+                await repos.MessageRepo.add(
+                    MessageRecord(
+                        umo=event.unified_msg_origin,
+                        sender_id=sender_id,
+                        group_id=group_id,
+                        content=text,
+                        dedup_hash=h,
+                    )
                 )
-            )
             await repos.LearningLogRepo.add(
                 LearningLog(stage="filter", input_text=text, output_text="", provider_id="")
             )
@@ -93,12 +99,22 @@ class LearningService:
             )
             if len(refined) < self.MIN_LEARN_CHARS:
                 return
-            rh = dedup_hash(refined)
-            if await repos.MemoryRepo.exists_hash(rh):
-                return
-            await repos.MemoryRepo.add(
-                Memory(content=refined, importance=0.5, source="learning", dedup_hash=rh)
-            )
+            if self._store_atom is not None:
+                _memory, created = await self._store_atom(
+                    refined,
+                    source="learning",
+                    importance=0.5,
+                    session_id=getattr(event, "unified_msg_origin", "") or "",
+                )
+                if not created:
+                    return
+            else:
+                rh = dedup_hash(refined)
+                if await repos.MemoryRepo.exists_hash(rh):
+                    return
+                await repos.MemoryRepo.add(
+                    Memory(content=refined, importance=0.5, source="learning", dedup_hash=rh)
+                )
             await repos.LearningLogRepo.add(
                 LearningLog(stage="reinforce", input_text=refined, output_text="", provider_id="")
             )

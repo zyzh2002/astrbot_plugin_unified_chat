@@ -230,7 +230,80 @@ class TestSlangRepoRoundtrip:
                 await SlangRepo.set_status(pending[0].id, "confirmed")
                 confirmed = await SlangRepo.confirmed_all()
                 assert confirmed[0].meaning == "永远的神"
-                assert await SlangRepo.exists_term("yyds") is True
+                assert await SlangRepo.exists_term("yyds", "") is True
             finally:
                 await close_engine()
                 reset_engine_for_tests()
+
+    async def test_concurrent_first_bumps_are_atomic_and_unique(self, tmp_path):
+        import asyncio
+
+        from unified_chat.storage.database import close_engine, get_engine, reset_engine_for_tests
+        from unified_chat.storage.repo import AffinityLookupRepo, AffinityRepo
+
+        reset_engine_for_tests()
+        await get_engine(tmp_path / "affinity-concurrent.db")
+        try:
+            await asyncio.gather(
+                *(AffinityRepo.bump("s", "u", 1.0) for _ in range(20))
+            )
+            rows = await AffinityRepo.all_rows()
+            assert len(rows) == 1
+            assert await AffinityLookupRepo.get_score("s", "u") == 70.0
+        finally:
+            await close_engine()
+            reset_engine_for_tests()
+
+    async def test_suggestion_prompt_uses_memory_service(self, tmp_path):
+        from unified_chat.services.persona_review import PersonaReviewService
+        from unified_chat.storage.database import close_engine, get_engine, reset_engine_for_tests
+
+        class Memory:
+            content = "user strongly prefers concise technical answers"
+
+        class MemoryService:
+            async def retrieve_hybrid(self, query, session_id=None, top_k=10):
+                assert query == "用户 偏好 事实" and top_k == 10
+                assert session_id == "group:GroupMessage:g1"
+                return [Memory()]
+
+        class Resp:
+            completion_text = "Be more concise and technical."
+
+        class Context:
+            def __init__(self):
+                self.prompt = ""
+
+            async def llm_generate(self, **kwargs):
+                self.prompt = kwargs["prompt"]
+                return Resp()
+
+        class Cfg:
+            chat_provider_id = "p"
+
+        reset_engine_for_tests()
+        await get_engine(tmp_path / "persona.db")
+        try:
+            context = Context()
+            service = PersonaReviewService(context, Cfg(), MemoryService())
+            assert await service.maybe_suggest("group:GroupMessage:g1")
+            assert "concise technical answers" in context.prompt
+        finally:
+            await close_engine()
+            reset_engine_for_tests()
+
+
+class TestSlangIsolation:
+    async def test_same_term_can_exist_in_two_sessions(self, tmp_path):
+        from unified_chat.storage.database import close_engine, get_engine, reset_engine_for_tests
+        from unified_chat.storage.repo import SlangRepo
+
+        reset_engine_for_tests()
+        await get_engine(tmp_path / "slang-isolation.db")
+        try:
+            await SlangRepo.add(SlangTerm(term="yyds", umo="s1", count=10))
+            assert await SlangRepo.exists_term("yyds", "s1") is True
+            assert await SlangRepo.exists_term("yyds", "s2") is False
+        finally:
+            await close_engine()
+            reset_engine_for_tests()

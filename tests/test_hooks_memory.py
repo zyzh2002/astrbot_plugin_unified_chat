@@ -9,6 +9,7 @@ from unified_chat.core.hooks import inject_memories
 class FakeEvent:
     def __init__(self, text="query text"):
         self.message_str = text
+        self.unified_msg_origin = "session-1"
 
 
 class FakeReq:
@@ -21,8 +22,8 @@ class FakeMemoryService:
         self.result = result
         self.calls = []
 
-    async def retrieve(self, query):
-        self.calls.append(query)
+    async def retrieve(self, query, session_id=None):
+        self.calls.append((query, session_id))
         return self.result
 
 
@@ -40,7 +41,7 @@ async def test_inject_memories_appends():
     req = FakeReq()
     svc = FakeMemoryService("- a memory")
     await inject_memories(FakeEvent(), req, PluginConfig(), svc)
-    assert svc.calls == ["query text"]
+    assert svc.calls == [("query text", "session-1")]
     assert len(req.contexts) == 1
     assert req.contexts[0]["role"] == "system"
     assert "- a memory" in req.contexts[0]["content"]
@@ -72,3 +73,11 @@ async def test_inject_memories_swallows_errors():
     req = FakeReq()
     await inject_memories(FakeEvent(), req, PluginConfig(), BoomService())
     assert req.contexts == []
+
+
+@pytest.mark.asyncio
+async def test_inject_memories_passes_event_session_id():
+    svc = FakeMemoryService("")
+    req = FakeReq()
+    await inject_memories(FakeEvent("cobalt"), req, PluginConfig(), svc)
+    assert svc.calls == [("cobalt", "session-1")]
