@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from datetime import datetime
+from datetime import UTC, datetime
 
 from sqlalchemy import and_, func, or_, text
 from sqlmodel import select
@@ -30,6 +30,24 @@ def _visible_clause(session_id: str, isolation: bool):
     if not isolation:
         return Memory.id.is_not(None)
     return or_(Memory.session_id == "", Memory.session_id == session_id)
+
+
+def _utcnow() -> datetime:
+    """Aware-UTC now. SQLite DATETIME round-trips as naive UTC wall clock,
+    so every comparison must use aware UTC (never local time)."""
+    return datetime.now(UTC)
+
+
+def _utc_wall(now: datetime) -> str:
+    """Format a datetime as the UTC wall-clock string SQLite DATETIME stores."""
+    if now.tzinfo is None:
+        return now.strftime("%Y-%m-%d %H:%M:%S.%f")
+    return now.astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S.%f")
+
+
+def _utc_ts(value: datetime) -> float:
+    """Epoch seconds for a value read back from SQLite (naive = UTC wall)."""
+    return value.timestamp() if value.tzinfo else value.replace(tzinfo=UTC).timestamp()
 
 
 class MessageRepo:
@@ -179,7 +197,7 @@ class MemoryRepo:
         now: datetime | None = None,
     ) -> list[Memory]:
         escaped = keyword.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-        now = now or datetime.now()
+        now = now or _utcnow()
         async with get_session() as session:
             rows = (
                 await session.exec(
@@ -303,7 +321,7 @@ class MemoryFts:
         expr = _fts_match_expr(query)
         if not expr:
             return []
-        now = now or datetime.now()
+        now = now or _utcnow()
         try:
             async with get_session() as session:
                 await MemoryFts._ensure_table(session)
@@ -320,7 +338,7 @@ class MemoryFts:
                     params={
                         "expr": expr,
                         "lim": int(limit),
-                        "now": now,
+                        "now": _utc_wall(now),
                         "isolation": 1 if isolation else 0,
                         "sid": session_id,
                     },
@@ -344,7 +362,7 @@ class MemoryHybridRepo:
     ) -> list[Memory]:
         if not ids:
             return []
-        now = now or datetime.now()
+        now = now or _utcnow()
         async with get_session() as session:
             rows = (
                 await session.exec(
@@ -401,7 +419,7 @@ class MemoryLookupRepo:
                 await session.exec(
                     select(Memory)
                     .where(Memory.dedup_hash == h)
-                    .where(_active_clause(datetime.now()))
+                    .where(_active_clause(_utcnow()))
                     .where(_visible_clause(session_id, isolation))
                     .limit(1)
                 )
@@ -420,7 +438,7 @@ class MemoryLookupRepo:
                 await session.exec(
                     select(Memory)
                     .where(Memory.id == memory_id)
-                    .where(_active_clause(datetime.now()))
+                    .where(_active_clause(_utcnow()))
                     .where(_visible_clause(session_id, isolation))
                     .limit(1)
                 )
@@ -441,7 +459,7 @@ class MemoryLookupRepo:
                 await session.exec(
                     select(Memory)
                     .where(Memory.kb_doc_id.in_(doc_ids))
-                    .where(_active_clause(datetime.now()))
+                    .where(_active_clause(_utcnow()))
                     .where(_visible_clause(session_id, isolation))
                 )
             ).all()
@@ -486,6 +504,7 @@ class MessageScanRepo:
 
     @staticmethod
     async def distinct_umos(limit: int = 50) -> list[tuple[str, float]]:
+        """Sessions by most recent activity, newest first (slang mining)."""
         async with get_session() as session:
             rows = (
                 await session.exec(
@@ -493,30 +512,30 @@ class MessageScanRepo:
                         MessageRecord.umo, func.max(MessageRecord.created_at)
                     )
                     .group_by(MessageRecord.umo)
+                    .order_by(func.max(MessageRecord.created_at).desc())
                     .limit(limit)
                 )
             ).all()
-            result = []
-            for umo, last_ts in rows:
-                if hasattr(last_ts, "timestamp"):
-                    result.append((str(umo), float(last_ts.timestamp())))
-                else:
-                    result.append((str(umo), 0.0))
-            return result
+            return [
+                (str(umo), _utc_ts(last_ts) if hasattr(last_ts, "timestamp") else 0.0)
+                for umo, last_ts in rows
+            ]
 
     @staticmethod
     async def distinct_group_umos(limit: int = 50) -> list[tuple[str, float]]:
+        """Group sessions by most recent activity, quietest first (proactive)."""
         async with get_session() as session:
             rows = (
                 await session.exec(
                     select(MessageRecord.umo, func.max(MessageRecord.created_at))
                     .where(MessageRecord.group_id != "")
                     .group_by(MessageRecord.umo)
+                    .order_by(func.max(MessageRecord.created_at).asc())
                     .limit(limit)
                 )
             ).all()
             return [
-                (str(umo), float(last_ts.timestamp()) if hasattr(last_ts, "timestamp") else 0.0)
+                (str(umo), _utc_ts(last_ts) if hasattr(last_ts, "timestamp") else 0.0)
                 for umo, last_ts in rows
             ]
 

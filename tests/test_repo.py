@@ -102,3 +102,96 @@ async def test_clear_kb_doc_ids():
         all_mems = await MemoryRepo.list_all()
         assert all(m.kb_doc_id is None for m in all_mems)
         await close_engine()
+
+
+def test_utc_wall_format():
+    from unified_chat.storage.repo import _utc_wall
+
+    assert _utc_wall(datetime(2026, 1, 2, 3, 4, 5, 6, tzinfo=UTC)) == (
+        "2026-01-02 03:04:05.000006"
+    )
+    # naive values are already UTC wall clock (SQLite round-trip)
+    assert _utc_wall(datetime(2026, 1, 2, 3, 4, 5, 6)) == "2026-01-02 03:04:05.000006"
+
+
+@pytest.mark.asyncio
+async def test_distinct_umos_epoch_is_utc_and_ordered():
+    reset_engine_for_tests()
+    with tempfile.TemporaryDirectory() as d:
+        await get_engine(Path(d) / "tz1.db")
+        from unified_chat.storage import repo as repo_mod
+
+        base = datetime.now(UTC) - timedelta(hours=1)
+        for umo, minutes in (("a", 0), ("b", 30), ("c", 60)):
+            await MessageRepo.add(
+                MessageRecord(
+                    umo=umo,
+                    sender_id="s",
+                    content="x",
+                    dedup_hash=f"tz-{umo}",
+                    group_id="g",
+                    created_at=base + timedelta(minutes=minutes),
+                )
+            )
+        rows = await repo_mod.MessageScanRepo.distinct_umos()
+        assert [r[0] for r in rows] == ["c", "b", "a"]  # most recent first
+        expected = (base + timedelta(minutes=60)).timestamp()
+        assert abs(rows[0][1] - expected) < 5  # no local-offset skew
+        g_rows = await repo_mod.MessageScanRepo.distinct_group_umos()
+        assert [r[0] for r in g_rows] == ["a", "b", "c"]  # quietest first
+        await close_engine()
+
+
+@pytest.mark.asyncio
+async def test_expiry_filters_use_utc_now(monkeypatch):
+    reset_engine_for_tests()
+    with tempfile.TemporaryDirectory() as d:
+        await get_engine(Path(d) / "tz2.db")
+        from unified_chat.storage import repo as repo_mod
+
+        fake_now = datetime.now(UTC)
+        monkeypatch.setattr(repo_mod, "_utcnow", lambda: fake_now)
+        live = await MemoryRepo.add(
+            Memory(
+                content="future",
+                dedup_hash="tz-f1",
+                session_id="",
+                expires_at=fake_now + timedelta(hours=1),
+            )
+        )
+        dead = await MemoryRepo.add(
+            Memory(
+                content="past",
+                dedup_hash="tz-p1",
+                session_id="",
+                expires_at=fake_now - timedelta(hours=1),
+            )
+        )
+        got = await repo_mod.MemoryLookupRepo.get_visible_by_id(
+            live.id, session_id="", isolation=True
+        )
+        assert got is not None and got.content == "future"
+        got2 = await repo_mod.MemoryLookupRepo.get_visible_by_id(
+            dead.id, session_id="", isolation=True
+        )
+        assert got2 is None
+        by_hash = await repo_mod.MemoryLookupRepo.get_by_hash(
+            "tz-f1", session_id="", isolation=True
+        )
+        assert by_hash is not None
+        await close_engine()
+
+
+@pytest.mark.asyncio
+async def test_busy_timeout_pragma():
+    reset_engine_for_tests()
+    with tempfile.TemporaryDirectory() as d:
+        await get_engine(Path(d) / "tz3.db")
+        from sqlalchemy import text
+
+        from unified_chat.storage.database import get_session
+
+        async with get_session() as session:
+            result = await session.exec(text("PRAGMA busy_timeout"))
+            assert int(result.scalar_one()) == 5000
+        await close_engine()

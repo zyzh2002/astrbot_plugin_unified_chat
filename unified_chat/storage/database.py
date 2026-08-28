@@ -143,6 +143,8 @@ async def get_engine(
             cursor = dbapi_connection.cursor()
             cursor.execute("PRAGMA journal_mode=WAL;")
             cursor.execute("PRAGMA synchronous=NORMAL;")
+            # concurrent per-message writers; wait instead of instant SQLITE_BUSY
+            cursor.execute("PRAGMA busy_timeout=5000;")
             cursor.execute("PRAGMA cache_size=20000;")
             cursor.close()
 
