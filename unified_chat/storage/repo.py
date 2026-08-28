@@ -62,6 +62,19 @@ class MessageRepo:
             return record
 
     @staticmethod
+    async def delete_older_than(cutoff: datetime) -> int:
+        async with get_session() as session:
+            rows = (
+                await session.exec(
+                    select(MessageRecord).where(MessageRecord.created_at < cutoff)
+                )
+            ).all()
+            for row in rows:
+                await session.delete(row)
+            await session.commit()
+            return len(rows)
+
+    @staticmethod
     async def count() -> int:
         async with get_session() as session:
             result = await session.exec(select(func.count()).select_from(MessageRecord))
@@ -254,6 +267,19 @@ class LearningLogRepo:
             await session.commit()
             await session.refresh(log)
             return log
+
+    @staticmethod
+    async def delete_older_than(cutoff: datetime) -> int:
+        async with get_session() as session:
+            rows = (
+                await session.exec(
+                    select(LearningLog).where(LearningLog.created_at < cutoff)
+                )
+            ).all()
+            for row in rows:
+                await session.delete(row)
+            await session.commit()
+            return len(rows)
 
     @staticmethod
     async def count_by_stage(stage: str) -> int:

@@ -51,6 +51,16 @@
     "type": "int",
     "default": 30
   },
+  "message_retention_days": {
+    "description": "原始消息记录保留天数（用于学习与统计，0 为永久保留）",
+    "type": "int",
+    "default": 90
+  },
+  "learning_log_retention_days": {
+    "description": "学习流水线日志保留天数（0 为永久保留）",
+    "type": "int",
+    "default": 30
+  },
   "importance_threshold": {
     "description": "低于该重要度的记忆可被清理",
     "type": "float",

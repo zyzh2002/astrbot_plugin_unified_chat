@@ -94,3 +94,27 @@ def test_phase8_learning_keys_roundtrip():
     assert cfg.persona_auto_suggest is True
     assert PluginConfig.from_dict({}).enable_style_learning is True
     assert PluginConfig.from_dict({}).persona_auto_suggest is False
+
+
+def test_retention_keys_roundtrip():
+    cfg = PluginConfig.from_dict(
+        {"message_retention_days": 7, "learning_log_retention_days": 3}
+    )
+    assert cfg.message_retention_days == 7
+    assert cfg.learning_log_retention_days == 3
+    defaults = PluginConfig.from_dict({})
+    assert defaults.message_retention_days == 90
+    assert defaults.learning_log_retention_days == 30
+    # negative input clamps to 0 (keep forever), not to the default
+    neg = PluginConfig.from_dict(
+        {"message_retention_days": -3, "learning_log_retention_days": -1}
+    )
+    assert neg.message_retention_days == 0
+    assert neg.learning_log_retention_days == 0
+    junk = PluginConfig.from_dict(
+        {"message_retention_days": "x", "learning_log_retention_days": None}
+    )
+    assert junk.message_retention_days == 90
+    assert junk.learning_log_retention_days == 30
+    dump = PluginConfig().to_dict()
+    assert "message_retention_days" in dump and "learning_log_retention_days" in dump

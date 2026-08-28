@@ -14,6 +14,8 @@ DEFAULTS = {
     "embedding_provider_id": "",
     "rerank_provider_id": "",
     "memory_cleanup_days": 30,
+    "message_retention_days": 90,
+    "learning_log_retention_days": 30,
     "importance_threshold": 0.3,
     "memory_kb_name": "unified_chat_memories",
     "native_autodownload": True,
@@ -55,6 +57,8 @@ class PluginConfig:
     embedding_provider_id: str = ""
     rerank_provider_id: str = ""
     memory_cleanup_days: int = 30
+    message_retention_days: int = 90
+    learning_log_retention_days: int = 30
     importance_threshold: float = 0.3
     memory_kb_name: str = "unified_chat_memories"
     native_autodownload: bool = True
@@ -108,6 +112,17 @@ class PluginConfig:
         if mcd < 1:
             mcd = int(d["memory_cleanup_days"])
 
+        # Retention days: 0 disables purging, negatives clamp to 0
+        def clamp_nonneg(key: str) -> int:
+            try:
+                value = int(pick(key, d[key]))
+            except (TypeError, ValueError):
+                value = int(d[key])
+            return max(0, value)
+
+        mrd = clamp_nonneg("message_retention_days")
+        lrd = clamp_nonneg("learning_log_retention_days")
+
         # Clamp importance_threshold into [0,1]
         try:
             thr = float(pick("importance_threshold", d["importance_threshold"]))
@@ -132,6 +147,8 @@ class PluginConfig:
             embedding_provider_id=str(pick("embedding_provider_id", d["embedding_provider_id"])),
             rerank_provider_id=str(pick("rerank_provider_id", d["rerank_provider_id"])),
             memory_cleanup_days=mcd,
+            message_retention_days=mrd,
+            learning_log_retention_days=lrd,
             importance_threshold=thr,
             memory_kb_name=str(pick("memory_kb_name", d["memory_kb_name"])),
             blacklist_users=[
@@ -225,6 +242,8 @@ class PluginConfig:
             "embedding_provider_id": self.embedding_provider_id,
             "rerank_provider_id": self.rerank_provider_id,
             "memory_cleanup_days": self.memory_cleanup_days,
+            "message_retention_days": self.message_retention_days,
+            "learning_log_retention_days": self.learning_log_retention_days,
             "importance_threshold": self.importance_threshold,
             "memory_kb_name": self.memory_kb_name,
             "native_autodownload": self.native_autodownload,

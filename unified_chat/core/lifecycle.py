@@ -117,6 +117,7 @@ class PluginLifecycle:
                 self._memory_service,
                 backup_service=self._backup_service,
                 learning_jobs=self._learning_jobs,
+                config=config,
             )
             self._cron.start()
             if config.humanize_proactive:
@@ -383,7 +384,9 @@ class PluginLifecycle:
             if action == "backup":
                 if self._backup_service is None:
                     return "[umem] backup unavailable"
-                dest = self._backup_service.run_backup("manual")
+                import asyncio
+
+                dest = await asyncio.to_thread(self._backup_service.run_backup, "manual")
                 return f"[umem] backup -> {dest.name}" if dest else "[umem] backup failed"
             if action == "reset":
                 if not session_id:

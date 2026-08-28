@@ -4,8 +4,28 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
+
+
+async def purge_retention(config: Any) -> tuple[int, int]:
+    """Delete messages/learning logs past their retention window (0 = keep)."""
+    from ..storage import repo as repos
+
+    now = datetime.now(UTC)
+    msg_days = int(getattr(config, "message_retention_days", 0) or 0)
+    log_days = int(getattr(config, "learning_log_retention_days", 0) or 0)
+    removed_msgs = 0
+    removed_logs = 0
+    if msg_days > 0:
+        removed_msgs = await repos.MessageRepo.delete_older_than(
+            now - timedelta(days=msg_days)
+        )
+    if log_days > 0:
+        removed_logs = await repos.LearningLogRepo.delete_older_than(
+            now - timedelta(days=log_days)
+        )
+    return removed_msgs, removed_logs
 
 
 class MemoryCleanupCron:
@@ -16,10 +36,12 @@ class MemoryCleanupCron:
         memory_service: Any,
         backup_service: Any | None = None,
         learning_jobs: Any | None = None,
+        config: Any | None = None,
     ):
         self.memory_service = memory_service
         self.backup_service = backup_service
         self.learning_jobs = learning_jobs
+        self.config = config
         self._task: asyncio.Task | None = None
 
     def start(self) -> None:
@@ -57,6 +79,11 @@ class MemoryCleanupCron:
         except Exception:
             self._log_error("tick")
             removed = 0
+        if self.config is not None:
+            try:
+                await purge_retention(self.config)
+            except Exception:
+                self._log_error("retention purge")
         if self.backup_service is not None:
             try:
                 await self.backup_service.daily_tick()

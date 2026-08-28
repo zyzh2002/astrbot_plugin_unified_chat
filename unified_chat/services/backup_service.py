@@ -95,8 +95,11 @@ class BackupService:
         return False
 
     async def daily_tick(self) -> bool:
-        """Run one scheduled daily backup."""
-        return self.run_backup("daily") is not None
+        """Run one scheduled daily backup (off the event loop)."""
+        import asyncio
+
+        dest = await asyncio.to_thread(self.run_backup, "daily")
+        return dest is not None
 
     @staticmethod
     def _log_error(msg: str) -> None:

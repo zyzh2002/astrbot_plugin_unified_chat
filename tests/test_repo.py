@@ -195,3 +195,41 @@ async def test_busy_timeout_pragma():
             result = await session.exec(text("PRAGMA busy_timeout"))
             assert int(result.scalar_one()) == 5000
         await close_engine()
+
+
+@pytest.mark.asyncio
+async def test_message_repo_delete_older_than():
+    reset_engine_for_tests()
+    with tempfile.TemporaryDirectory() as d:
+        await get_engine(Path(d) / "ret1.db")
+        old = datetime.now(UTC) - timedelta(days=100)
+        await MessageRepo.add(
+            MessageRecord(umo="a", sender_id="s", content="old", dedup_hash="o1", created_at=old)
+        )
+        await MessageRepo.add(
+            MessageRecord(umo="a", sender_id="s", content="new", dedup_hash="n1")
+        )
+        removed = await MessageRepo.delete_older_than(datetime.now(UTC) - timedelta(days=90))
+        assert removed == 1
+        assert await MessageRepo.count() == 1
+        await close_engine()
+
+
+@pytest.mark.asyncio
+async def test_learning_log_repo_delete_older_than():
+    reset_engine_for_tests()
+    with tempfile.TemporaryDirectory() as d:
+        await get_engine(Path(d) / "ret2.db")
+        from unified_chat.storage.models import LearningLog
+
+        old = datetime.now(UTC) - timedelta(days=100)
+        await LearningLogRepo.add(
+            LearningLog(stage="filter", input_text="old", created_at=old)
+        )
+        await LearningLogRepo.add(LearningLog(stage="filter", input_text="new"))
+        removed = await LearningLogRepo.delete_older_than(
+            datetime.now(UTC) - timedelta(days=30)
+        )
+        assert removed == 1
+        assert await LearningLogRepo.count_by_stage("filter") == 1
+        await close_engine()
