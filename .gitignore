@@ -59,3 +59,4 @@ htmlcov/
 
 # opencode session exports
 session-ses_*.md
+.zcode/
