@@ -142,6 +142,19 @@ class MemoryRepo:
             return list(result.all())
 
     @staticmethod
+    async def sender_stats(source: str, since: datetime) -> tuple[int, datetime | None]:
+        """Count memories from source since cutoff, plus the newest timestamp."""
+        async with get_session() as session:
+            row = (
+                await session.exec(
+                    select(func.count(), func.max(Memory.created_at))
+                    .where(Memory.source == source)
+                    .where(Memory.created_at > since)
+                )
+            ).one()
+            return int(row[0] or 0), row[1]
+
+    @staticmethod
     async def count() -> int:
         async with get_session() as session:
             result = await session.exec(select(func.count()).select_from(Memory))

@@ -65,7 +65,7 @@ class FakeContext:
 
 def test_compute_importance_bounds():
     svc = MemoryService(FakeContext(None), PluginConfig())
-    v = svc.compute_importance("hello world", "alice", [])
+    v = svc.compute_importance("hello world", 0, None)
     assert 0.0 <= v <= 1.0
 
 
@@ -216,3 +216,110 @@ async def test_kb_results_are_filtered_by_session_and_ttl(tmp_path):
     assert "session two" not in result and "expired hidden" not in result
     assert "LEAK-MARKER" not in result
     await close_engine()
+
+
+def test_compute_importance_bounds_with_stats():
+    svc = MemoryService(FakeContext(None), PluginConfig())
+    v = svc.compute_importance("hello world", 0, None)
+    assert 0.0 <= v <= 1.0
+    v2 = svc.compute_importance("hello world", 5, None)
+    assert v2 >= v  # frequency raises importance
+
+
+@pytest.mark.asyncio
+async def test_sender_stats_aggregate():
+    import tempfile
+    from datetime import UTC, datetime, timedelta
+    from pathlib import Path
+
+    from unified_chat.storage.database import (
+        close_engine,
+        get_engine,
+        reset_engine_for_tests,
+    )
+    from unified_chat.storage.models import Memory
+    from unified_chat.storage.repo import MemoryRepo
+
+    reset_engine_for_tests()
+    with tempfile.TemporaryDirectory() as d:
+        await get_engine(Path(d) / "stats.db")
+        try:
+            now = datetime.now(UTC)
+            await MemoryRepo.add(
+                Memory(content="a", dedup_hash="s1", source="alice", created_at=now)
+            )
+            await MemoryRepo.add(
+                Memory(
+                    content="b",
+                    dedup_hash="s2",
+                    source="alice",
+                    created_at=now - timedelta(days=1),
+                )
+            )
+            await MemoryRepo.add(
+                Memory(
+                    content="c",
+                    dedup_hash="s3",
+                    source="alice",
+                    created_at=now - timedelta(days=30),
+                )
+            )
+            await MemoryRepo.add(
+                Memory(content="d", dedup_hash="s4", source="bob", created_at=now)
+            )
+            freq, newest = await MemoryRepo.sender_stats(
+                "alice", now - timedelta(days=7)
+            )
+            assert freq == 2
+            assert newest is not None
+            assert abs((now - newest.replace(tzinfo=UTC)).total_seconds()) < 5
+            freq_bob, newest_bob = await MemoryRepo.sender_stats(
+                "bob", now - timedelta(days=7)
+            )
+            assert freq_bob == 1 and newest_bob is not None
+            freq_none, newest_none = await MemoryRepo.sender_stats(
+                "carol", now - timedelta(days=7)
+            )
+            assert (freq_none, newest_none) == (0, None)
+        finally:
+            await close_engine()
+            reset_engine_for_tests()
+
+
+@pytest.mark.asyncio
+async def test_maybe_store_uses_stats_not_full_scan(monkeypatch):
+    import tempfile
+    from pathlib import Path
+
+    from unified_chat.storage import repo as repos_mod
+    from unified_chat.storage.database import (
+        close_engine,
+        get_engine,
+        reset_engine_for_tests,
+    )
+    from unified_chat.storage.repo import MemoryRepo
+
+    reset_engine_for_tests()
+    with tempfile.TemporaryDirectory() as d:
+        await get_engine(Path(d) / "scan.db")
+        try:
+            # the old full-table hydration must never be called per message
+            monkeypatch.setattr(
+                repos_mod.MemoryRepo,
+                "list_all",
+                staticmethod(_raise_list_all),
+            )
+            svc = MemoryService(FakeContext(FakeKbManager()), PluginConfig())
+            ev = FakeEvent("this is a long enough memory candidate message")
+            await svc.maybe_store(ev, "alice")
+            monkeypatch.undo()  # allow the verification read below
+            mems = await MemoryRepo.list_all()
+            assert len(mems) == 1
+            assert mems[0].source == "alice"
+        finally:
+            await close_engine()
+            reset_engine_for_tests()
+
+
+def _raise_list_all():
+    raise AssertionError("list_all must not be called from maybe_store")

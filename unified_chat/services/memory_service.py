@@ -131,17 +131,11 @@ class MemoryService:
     def _aware(dt: datetime) -> datetime:
         return dt if dt.tzinfo is not None else dt.replace(tzinfo=UTC)
 
-    def compute_importance(self, content: str, sender_id: str, existing: list[Memory]) -> float:
+    def compute_importance(self, content: str, freq: int, newest: datetime | None) -> float:
         now = datetime.now(UTC)
-        freq = 0
-        newest: datetime | None = None
-        for m in existing:
-            created = self._aware(m.created_at)
-            if m.source == sender_id and (now - created).days < 7:
-                freq += 1
-                if newest is None or created > newest:
-                    newest = created
-        recency_hours = 0.0 if newest is None else max(0.0, (now - newest).total_seconds() / 3600.0)
+        recency_hours = 0.0 if newest is None else max(
+            0.0, (now - self._aware(newest)).total_seconds() / 3600.0
+        )
         return score_importance(len(content), recency_hours, freq)
 
     def should_store(self, event: Any) -> bool:
@@ -157,8 +151,10 @@ class MemoryService:
             if not self.should_store(event):
                 return
             text = event.message_str
-            existing = await repos.MemoryRepo.list_all()
-            importance = self.compute_importance(text, sender_id, existing)
+            freq, newest = await repos.MemoryRepo.sender_stats(
+                sender_id, datetime.now(UTC) - timedelta(days=7)
+            )
+            importance = self.compute_importance(text, freq, newest)
             session_id = self.session_id_for(event)
             await self.store_atom(
                 text,
