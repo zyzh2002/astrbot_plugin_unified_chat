@@ -37,11 +37,13 @@ class MemoryCleanupCron:
         backup_service: Any | None = None,
         learning_jobs: Any | None = None,
         config: Any | None = None,
+        sweep_targets: list[Any] | None = None,
     ):
         self.memory_service = memory_service
         self.backup_service = backup_service
         self.learning_jobs = learning_jobs
         self.config = config
+        self.sweep_targets = sweep_targets or []
         self._task: asyncio.Task | None = None
 
     def start(self) -> None:
@@ -90,6 +92,14 @@ class MemoryCleanupCron:
             await MemoryFts.reconcile()
         except Exception:
             self._log_error("fts reconcile")
+        for target in self.sweep_targets:
+            sweep = getattr(target, "sweep", None)
+            if sweep is None:
+                continue
+            try:
+                await sweep() if asyncio.iscoroutinefunction(sweep) else sweep()
+            except Exception:
+                self._log_error("state sweep")
         if self.backup_service is not None:
             try:
                 await self.backup_service.daily_tick()

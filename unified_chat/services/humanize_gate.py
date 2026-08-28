@@ -105,6 +105,19 @@ class ReplyGate:
         self.fatigue.on_reply(state)
         state.last_reply_ts = now
 
+    def sweep(self, now: float | None = None) -> int:
+        """Drop sessions idle beyond the sweep horizon; returns removed count."""
+        now = _now() if now is None else now
+        horizon = 24 * 3600.0
+        stale = [
+            session
+            for session, state in self._states.items()
+            if now - max(state.last_message_ts, state.last_reply_ts) > horizon
+        ]
+        for session in stale:
+            del self._states[session]
+        return len(stale)
+
     def _probability(self, state: SessionGateState, now: float) -> float:
         cfg = self.config
         base = float(getattr(cfg, "humanize_base_probability", 0.15))

@@ -123,6 +123,18 @@ class PluginLifecycle:
                 backup_service=self._backup_service,
                 learning_jobs=self._learning_jobs,
                 config=config,
+                sweep_targets=[
+                    target
+                    for target in (
+                        self._humanize,
+                        self._humanize.gate if self._humanize else None,
+                        self._humanize.cache if self._humanize else None,
+                        self._chat_service,
+                        self._proactive,
+                        getattr(self._memory_service, "summarizer", None),
+                    )
+                    if target is not None
+                ],
             )
             self._cron.start()
             if config.humanize_proactive:

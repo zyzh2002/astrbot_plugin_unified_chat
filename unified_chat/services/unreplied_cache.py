@@ -42,3 +42,15 @@ class UnrepliedCache:
     def merge_block(self, entries: list[tuple[str, str, float]]) -> str:
         lines = [f"- {sender}: {text}" for sender, text, _ts in entries]
         return "Recent group chatter without reply:\n" + "\n".join(lines)
+
+    def sweep(self, now: float | None = None) -> int:
+        """Evict sessions whose newest entry is older than the TTL."""
+        now = time.time() if now is None else now
+        stale = [
+            session
+            for session, bucket in self._data.items()
+            if not bucket or (now - bucket[-1][2]) > self.ttl
+        ]
+        for session in stale:
+            del self._data[session]
+        return len(stale)

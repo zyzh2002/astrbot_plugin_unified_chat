@@ -284,3 +284,42 @@ class TestPerSessionSerialization:
         commit_one = order.index("commit:one")
         decide_two = order.index("decide:two")
         assert commit_one < decide_two, order
+
+
+class TestStateSweep:
+    """Spec 011 R10: per-session in-memory state must be evictable."""
+
+    def test_gate_sweep_evicts_idle_sessions(self):
+        gate = fresh_gate()
+        gate.decide(make_event("hi", sender="a"), now=1000.0)
+        gate.decide(make_event("hi", sender="b"), now=2000.0)
+        assert len(gate._states) == 2
+        removed = gate.sweep(now=1000.0 + 24 * 3600 + 60)
+        assert removed == 1
+        assert len(gate._states) == 1
+
+    def test_cache_sweep_evicts_idle_sessions(self):
+        cache = UnrepliedCache()
+        cache.append("old", "u", "hi", now=1000.0)
+        cache.append("new", "u", "hi", now=2900.0)
+        removed = cache.sweep(now=3000.0)  # old: age 2000 > ttl; new: age 100
+        assert removed == 1
+        assert "old" not in cache._data and "new" in cache._data
+
+    def test_humanize_service_sweep_prunes_locks(self):
+
+        from unified_chat.services.humanize_service import HumanizeService
+
+        svc = HumanizeService(object(), Cfg(), rng=random.Random(1))
+        lock_old = svc._lock("old")
+        lock_new = svc._lock("new")
+        assert len(svc._locks) == 2
+        # simulate stale usage timestamps
+        svc._lock_used["old"] = 1000.0
+        svc._lock_used["new"] = 2000.0
+        removed = svc.sweep(now=2000.0 + 24 * 3600 - 60)
+        assert removed >= 1
+        assert "old" not in svc._locks
+        assert "new" in svc._locks
+        assert lock_new is svc._lock("new")  # surviving lock is reused
+        assert lock_old is not None

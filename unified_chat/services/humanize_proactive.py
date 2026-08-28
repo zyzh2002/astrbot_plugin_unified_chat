@@ -81,6 +81,15 @@ class ProactiveService:
                 sent += 1
         return sent
 
+    def sweep(self, now: float | None = None) -> int:
+        """Drop in-memory opener records older than 7 days."""
+        now = time.time() if now is None else now
+        horizon = 7 * 86400.0
+        stale = [umo for umo, ts in self._last_sent.items() if now - ts > horizon]
+        for umo in stale:
+            del self._last_sent[umo]
+        return len(stale)
+
     async def _send_opener(self, umo: str) -> bool:
         llm_generate = getattr(self.context, "llm_generate", None)
         provider_id = getattr(self.config, "chat_provider_id", "")

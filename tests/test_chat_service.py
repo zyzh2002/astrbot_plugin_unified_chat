@@ -65,3 +65,25 @@ def test_social_context_private_empty():
 
 def test_social_context_empty_buffer():
     assert ChatService().social_context(FakeEvent("x")) == ""
+
+
+def test_chat_service_sweep_evicts_idle_sessions():
+
+    svc = ChatService()
+
+    class Ev:
+        unified_msg_origin = "s:1"
+        message_str = "hello there"
+
+        def get_sender_name(self):
+            return "u"
+
+    svc.record(Ev())
+    svc.remember_hash("s:1", "h1")
+    svc._touch("s:1", now=1000.0)
+    svc._touch("s:2", now=2000.0)
+    svc.remember_hash("s:2", "h2")
+    removed = svc.sweep(now=2000.0 + 2 * 3600 + 60)
+    assert removed == 1
+    assert "s:1" not in svc._buffers and "s:1" not in svc._seen
+    assert "s:2" in svc._seen

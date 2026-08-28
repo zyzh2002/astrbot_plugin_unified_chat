@@ -65,15 +65,35 @@ class MemorySummarizer:
         self.config = config
         self._store_atom = store_atom
         self._counters: dict[str, int] = {}
+        self._counter_ts: dict[str, float] = {}
 
     def observe(self, umo: str) -> bool:
         """Count a captured message; True when a summary run is due."""
+        import time as _time
+
         batch = int(getattr(self.config, "summary_batch_size", 10) or 0)
         if batch <= 0:
             return False
         count = self._counters.get(umo, 0) + 1
         self._counters[umo] = count
+        self._counter_ts[umo] = _time.monotonic()
         return count % batch == 0
+
+    def sweep(self, now: float | None = None) -> int:
+        """Drop counters for sessions idle beyond 24h."""
+        import time as _time
+
+        now = _time.monotonic() if now is None else float(now)
+        horizon = 24 * 3600.0
+        stale = [
+            umo
+            for umo, ts in self._counter_ts.items()
+            if now - ts > horizon
+        ]
+        for umo in stale:
+            self._counters.pop(umo, None)
+            self._counter_ts.pop(umo, None)
+        return len(stale)
 
     async def maybe_summarize(self, umo: str) -> int:
         """Run one summarize cycle for the session; returns atoms stored."""

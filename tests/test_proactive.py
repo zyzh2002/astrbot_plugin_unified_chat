@@ -47,3 +47,16 @@ async def test_proactive_duplicate_is_persisted_for_24_hours(tmp_path):
     finally:
         await close_engine()
         reset_engine_for_tests()
+
+
+def test_proactive_sweep_evicts_old_entries():
+    import random as _random
+
+    from unified_chat.services.humanize_proactive import ProactiveService
+
+    svc = ProactiveService(object(), object(), rng=_random.Random(1))
+    svc._last_sent["old"] = 1000.0
+    svc._last_sent["recent"] = 5000.0
+    removed = svc.sweep(now=607000.0)  # old age 606000 > 7d; recent 602000 < 7d
+    assert removed == 1
+    assert "old" not in svc._last_sent and "recent" in svc._last_sent

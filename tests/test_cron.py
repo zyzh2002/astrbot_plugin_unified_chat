@@ -113,3 +113,20 @@ async def test_daily_backup_runs_off_loop(tmp_path, monkeypatch):
     svc = BackupService({}, _Path(tmp_path) / "db.sqlite")
     assert await svc.daily_tick() is True
     assert seen["thread"] != threading.get_ident()
+
+
+@pytest.mark.asyncio
+async def test_tick_calls_sweep_targets():
+    import unified_chat.core.cron as cron_mod
+
+    swept = []
+
+    class Sweepable:
+        def sweep(self):
+            swept.append(True)
+
+    cron = cron_mod.MemoryCleanupCron(
+        FakeMemoryService(), config=None, sweep_targets=[Sweepable(), object()]
+    )
+    await cron._tick()
+    assert len(swept) == 1  # object() without sweep() is skipped safely

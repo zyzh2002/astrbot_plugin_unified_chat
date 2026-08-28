@@ -70,13 +70,36 @@ class HumanizeService:
         self.cache = UnrepliedCache()
         self.air = AirReader(context, config)
         self._locks: dict[str, asyncio.Lock] = {}
+        self._lock_used: dict[str, float] = {}
 
     def _lock(self, session: str) -> asyncio.Lock:
+        import time as _time
+
         lock = self._locks.get(session)
         if lock is None:
             lock = asyncio.Lock()
             self._locks[session] = lock
+        self._lock_used[session] = _time.monotonic()
         return lock
+
+    def sweep(self, now: float | None = None) -> int:
+        """Evict idle per-session state (gate states, cache keys, locks)."""
+        import time as _time
+
+        now = _time.monotonic() if now is None else now
+        removed = self.gate.sweep(now)
+        removed += self.cache.sweep(_time.time())
+        horizon = 24 * 3600.0
+        stale_locks = [
+            session
+            for session, used_at in self._lock_used.items()
+            if now - used_at > horizon
+        ]
+        for session in stale_locks:
+            if not self._locks[session].locked():
+                del self._locks[session]
+            del self._lock_used[session]
+        return removed + len(stale_locks)
 
     @staticmethod
     def _session_of(event: Any) -> str:
