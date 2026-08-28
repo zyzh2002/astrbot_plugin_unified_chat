@@ -1,6 +1,6 @@
 [project]
 name = "astrbot-plugin-unified-chat"
-version = "0.2.0"
+version = "0.3.0"
 description = "Unified conversational intelligence for AstrBot"
 readme = "README.md"
 requires-python = ">=3.12"

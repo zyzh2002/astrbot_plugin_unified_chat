@@ -1,6 +1,6 @@
 [package]
 name = "unified_chat_native"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 description = "Native acceleration for unified_chat (PyO3)"
 license = "MIT"

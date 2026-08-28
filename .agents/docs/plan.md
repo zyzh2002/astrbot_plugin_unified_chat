@@ -55,6 +55,16 @@
 - Budgeted context injection and stable sender identity
 - Spec: specs/010-learning-depth.md
 
+### Phase 9: Hardening Round 2 [DONE]
+- Aware-UTC storage comparisons, epoch conversion and FTS datetime binding
+- Per-document KB migration with stale-flag recovery and persisted results
+- Blacklist/blocked-keyword enforcement decoupled from humanize; reset guards
+- Message/learning-log retention, async backups, per-session gate serialization
+- Slang status advancement, budget-aware injection, SQL affinity decay, kv upsert
+- FTS reconcile, cancellation-safe callbacks, state sweeps, sha256 sidecar
+- Baseline x86-64 wheels, unwinding panics, capture dedup scoped per session
+- Spec: specs/011-hardening-round-2.md
+
 ## Constraints
 - AstrBot >=4.27.3,<5.0.0, Python >=3.12, SQLite/FTS5 storage
 - Native wheels: linux-x86_64, linux-aarch64, windows-x86_64, macos-arm64

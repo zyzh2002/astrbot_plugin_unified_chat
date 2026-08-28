@@ -177,8 +177,9 @@ directly.
 
 - Module-level `asyncio.Lock` in `database.py`: harmless under AstrBot's single event
   loop; a clarifying comment is added instead of a lazy-per-loop redesign.
-- Admin-only gating for `/umem reset` and other destructive commands: requires
-  runtime verification of AstrBot's admin/role API; tracked as a follow-up task.
+- Admin-only gating for destructive commands: VERIFIED ALREADY PRESENT — `main.py`
+  decorates `/umem`, `/uslang`, `/upersona`, `/unified_migrate` with
+  `filter.permission_type(filter.PermissionType.ADMIN)`. No work needed.
 - Rust `unwrap`-surface and integer-overflow audit beyond the build-profile change
   (current panic surface verified unreachable for valid inputs).
 

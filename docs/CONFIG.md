@@ -16,13 +16,18 @@ WebUI 插件页由 `_conf_schema.json` 驱动。
 
 - `data_dir` - 覆盖 `StarTools.get_data_dir()`，默认自动管理。
 - 记忆清理：`memory_cleanup_days=30`, `importance_threshold=0.3`，每日 03:00 执行。
+- 数据留存：`message_retention_days=90`、`learning_log_retention_days=30`，
+  每日 03:00 清理超过保留期的原始消息与学习日志（`0` 为永久保留）。
 - 未配置 `embedding_provider_id` 时记忆降级为纯 SQLite 模式（关键词检索，无向量索引）。
 
 ## 迁移
 
 更换嵌入模型时插件在启动时检测快照不一致，`/unified_status` 显示 `needs_migration=yes`，
-执行 `/unified_migrate <kb_name>` 后台全量重建索引（快照分块 → 删除旧文档 → 按当前嵌入模型重传）。
-迁移记忆库后 `Memory.kb_doc_id` 链接会清空（SQLite 为事实源）。
+执行 `/unified_migrate <kb_name>` 后台逐文档重建索引（每个文档"删一个 → 传一个"，
+单个文档上传失败仅影响该文档并尽力回传原文，不会清空整个知识库）。
+迁移记忆库成功后 `Memory.kb_doc_id` 链接会清空（SQLite 为事实源），并更新嵌入快照。
+迁移结果持久化于 KV，`/unified_status` 以 `migration_last=<kb>: <结果>` 展示；
+进程崩溃残留的 running 标志会在 6 小时后视为陈旧自动清除，启动时也会清扫。
 
 ## 原生加速（跨平台）
 
@@ -50,7 +55,9 @@ WebUI 插件页由 `_conf_schema.json` 驱动。
   可选 LLM 二段判断（`humanize_air_reading_llm`，超时兜底为回复）。
 - 未回复消息进入缓存，下次回复时合并为上下文注入。
 - 主动话题：`humanize_proactive`（沉默超阈值后随机开口）。
-- 安全：`blacklist_users` / `trigger_keywords` / `blocked_keywords`。
+- 安全：`blacklist_users`（消息直接忽略）与 `blocked_keywords`（命中整条丢弃，
+  指令文本豁免）**始终生效**，不依赖 `humanize_enable`；
+  `trigger_keywords` 命中必回复（仅在拟人开启时作用于群聊门控）。
 
 ## 学习深化
 
