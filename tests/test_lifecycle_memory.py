@@ -6,6 +6,7 @@ from unittest.mock import patch
 import pytest
 
 from unified_chat.core.lifecycle import PluginLifecycle
+from unified_chat.storage import repo as repos
 from unified_chat.storage.database import close_engine, reset_engine_for_tests
 
 
@@ -100,7 +101,9 @@ async def test_umem_forget_cannot_delete_other_session(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_umem_reset_clears_global_scope_when_isolation_off(tmp_path):
+async def test_umem_reset_refuses_global_scope_when_isolation_off(tmp_path):
+    # spec 011 R3: with isolation off, session_id is "" and reset used to
+    # wipe the ENTIRE shared pool; it must refuse instead.
     reset_engine_for_tests()
     cfg = {"memory_session_isolation": False}
     with patch("unified_chat.utils.path.resolve_data_dir", lambda raw, ctx: tmp_path / "data"):
@@ -108,5 +111,7 @@ async def test_umem_reset_clears_global_scope_when_isolation_off(tmp_path):
         await lc.on_load()
         await lc._memory_service.memorize_text("global shared durable fact")
         event = FakeEvent("/umem", umo="p:m:1")
-        assert "cleared 1" in await lc.umem(event, "reset", "")
+        reply = await lc.umem(event, "reset", "")
+        assert "isolation" in reply
+        assert await repos.MemoryRepo.count() == 1  # untouched
         await lc.on_unload()

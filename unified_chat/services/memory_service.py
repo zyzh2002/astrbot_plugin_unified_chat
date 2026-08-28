@@ -269,7 +269,11 @@ class MemoryService:
         return await self._delete_memories([row] if row is not None else [])
 
     async def forget_session(self, session_id: str | None) -> int:
-        rows = await repos.MemoryAdminRepo.list_by_session(session_id or "")
+        if not session_id:
+            # isolation off / unknown origin: refusing would still mean wiping
+            # the whole shared pool, so this is a hard no-op
+            return 0
+        rows = await repos.MemoryAdminRepo.list_by_session(session_id)
         return await self._delete_memories(rows)
 
     async def _delete_memories(self, rows: list[Memory]) -> int:

@@ -58,9 +58,11 @@ class ReplyGate:
 
         return ChatService.is_command(text)
 
-    def _matches_any(self, text: str, words: list[str]) -> bool:
-        lowered = text.lower()
-        return any(str(w).strip() and str(w).lower() in lowered for w in words)
+    @staticmethod
+    def _matches_any(text: str, words: list[str]) -> bool:
+        from .humanize_service import matches_any
+
+        return matches_any(text, words)
 
     def decide(self, event: Any, now: float | None = None) -> GateDecision:
         cfg = self.config
@@ -69,14 +71,13 @@ class ReplyGate:
 
         if not getattr(cfg, "humanize_enable", False):
             return GateDecision(True, "disabled")
-        sender = self._sender_of(event)
-        blacklist = list(getattr(cfg, "blacklist_users", []) or [])
-        if sender and sender in {str(u) for u in blacklist}:
+        from .humanize_service import blocked_keyword_hit, is_blacklisted
+
+        if is_blacklisted(event, cfg):
             return GateDecision(False, "blacklisted")
         if self._is_command(text):
             return GateDecision(True, "command")
-        blocked = list(getattr(cfg, "blocked_keywords", []) or [])
-        if self._matches_any(text, blocked):
+        if blocked_keyword_hit(event, cfg):
             return GateDecision(False, "blocked_keyword")
         if not self.is_group(event):
             return GateDecision(True, "private")
@@ -88,7 +89,7 @@ class ReplyGate:
 
         session = getattr(event, "unified_msg_origin", "") or "unknown"
         state = self._state(session)
-        self.attention.bump(state, sender or "anon", now)
+        self.attention.bump(state, self._sender_of(event) or "anon", now)
 
         probability = self._probability(state, now)
         allowed = self.rng.random() < probability

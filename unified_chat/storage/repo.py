@@ -483,6 +483,9 @@ class MemoryAdminRepo:
 
     @staticmethod
     async def delete_by_session(session_id: str) -> int:
+        if not session_id:
+            # "" matches the whole global pool; only explicit ids may clear it
+            return 0
         async with get_session() as session:
             rows = (
                 await session.exec(select(Memory).where(Memory.session_id == session_id))
@@ -492,6 +495,8 @@ class MemoryAdminRepo:
 
     @staticmethod
     async def list_by_session(session_id: str) -> list[Memory]:
+        if not session_id:
+            return []
         async with get_session() as session:
             rows = (
                 await session.exec(select(Memory).where(Memory.session_id == session_id))

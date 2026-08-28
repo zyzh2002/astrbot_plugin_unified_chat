@@ -203,6 +203,25 @@ class PluginLifecycle:
     async def handle_message(self, event: AstrMessageEvent):
         if self._pipeline is None:
             return
+        if self._config is not None:
+            # blacklist and blocked keywords are unconditional (documented in
+            # the config schema), independent of the humanize toggle
+            try:
+                from ..services.humanize_service import (
+                    blocked_keyword_hit,
+                    is_blacklisted,
+                )
+
+                if is_blacklisted(event, self._config) or blocked_keyword_hit(
+                    event, self._config
+                ):
+                    event.stop_event()
+                    return
+            except Exception:
+                with contextlib.suppress(Exception):
+                    from astrbot.api import logger  # type: ignore
+
+                    logger.error("[unified_chat] pre-filter failed", exc_info=True)
         if self._humanize is not None and getattr(
             self._config, "humanize_enable", False
         ):
@@ -367,6 +386,11 @@ class PluginLifecycle:
                 dest = self._backup_service.run_backup("manual")
                 return f"[umem] backup -> {dest.name}" if dest else "[umem] backup failed"
             if action == "reset":
+                if not session_id:
+                    return (
+                        "[umem] reset requires memory_session_isolation; "
+                        "refusing to clear the shared memory pool"
+                    )
                 removed = await self._memory_service.forget_session(session_id)
                 return f"[umem] cleared {removed} memories for this session"
             return "[umem] unknown action; try /umem help"
