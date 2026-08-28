@@ -3,6 +3,9 @@
 
 def chunk_text(text: str, chunk_size: int, chunk_overlap: int) -> list[str]:
     """Fallback chunking with same semantics as Rust impl."""
+    if chunk_overlap < 0:
+        # the Rust signature takes usize; pyo3 rejects negatives, so match it
+        raise ValueError("chunk_overlap must be >= 0")
     if chunk_size <= 0:
         return []
     if not text:

@@ -77,12 +77,18 @@ async def test_refine_missing_provider(tmp_path):
 @pytest.mark.asyncio
 async def test_maybe_learn_degrade_mode(tmp_path):
     await _db(tmp_path)
+    from unified_chat.storage.models import MessageRecord
     from unified_chat.storage.repo import MemoryRepo, MessageRepo
+    from unified_chat.utils.hashing import dedup_hash
 
+    # capture is owned by the pipeline; learning sees the message already stored
     svc = LearningService(FakeContext(), PluginConfig(chat_provider_id=""))
     text = "raw message long enough"
+    await MessageRepo.add(
+        MessageRecord(umo="p:m:1", sender_id="alice", content=text, dedup_hash=dedup_hash(text))
+    )
     await svc.maybe_learn(FakeEvent(text), "alice")
-    assert await MessageRepo.count() == 1
+    assert await MessageRepo.count() == 1  # no duplicate capture
     assert await MemoryRepo.list_all() == []
     await svc.maybe_learn(FakeEvent(text), "alice")
     assert await MessageRepo.count() == 1
@@ -91,26 +97,38 @@ async def test_maybe_learn_degrade_mode(tmp_path):
 @pytest.mark.asyncio
 async def test_maybe_learn_full_pipeline(tmp_path):
     await _db(tmp_path)
+    from unified_chat.storage.models import MessageRecord
     from unified_chat.storage.repo import MemoryRepo, MessageRepo
+    from unified_chat.utils.hashing import dedup_hash
 
     svc = LearningService(FakeContext(provider_id="p1"), PluginConfig(chat_provider_id="p1"))
-    await svc.maybe_learn(FakeEvent("hello world long message"), "alice")
+    text = "hello world long message"
+    await MessageRepo.add(
+        MessageRecord(umo="p:m:1", sender_id="alice", content=text, dedup_hash=dedup_hash(text))
+    )
+    await svc.maybe_learn(FakeEvent(text), "alice")
     mems = await MemoryRepo.list_all()
     assert len(mems) == 1
     assert mems[0].source == "learning"
     assert mems[0].content == "durable fact about alice"
     assert await MessageRepo.count() == 1
-    await svc.maybe_learn(FakeEvent("hello world long message"), "alice")
+    await svc.maybe_learn(FakeEvent(text), "alice")
     assert len(await MemoryRepo.list_all()) == 1
 
 
 @pytest.mark.asyncio
 async def test_refine_failure_keeps_pipeline(tmp_path):
     await _db(tmp_path)
+    from unified_chat.storage.models import MessageRecord
     from unified_chat.storage.repo import MemoryRepo, MessageRepo
+    from unified_chat.utils.hashing import dedup_hash
 
     svc = LearningService(FakeContext(), PluginConfig(chat_provider_id="p1"))
-    await svc.maybe_learn(FakeEvent("hello world long message"), "alice")
+    text = "hello world long message"
+    await MessageRepo.add(
+        MessageRecord(umo="p:m:1", sender_id="alice", content=text, dedup_hash=dedup_hash(text))
+    )
+    await svc.maybe_learn(FakeEvent(text), "alice")
     assert await MemoryRepo.list_all() == []
     assert await MessageRepo.count() == 1
 

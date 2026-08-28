@@ -35,7 +35,7 @@ _PLUGIN_TABLES = (
 
 _engine: AsyncEngine | None = None
 _engine_lock = asyncio.Lock()
-_SCHEMA_VERSION = 3
+_SCHEMA_VERSION = 4
 
 
 def _needs_migration(db_path: Path) -> bool:
@@ -95,6 +95,16 @@ def _migrate_schema(sync_conn) -> None:
     sync_conn.exec_driver_sql(
         "CREATE UNIQUE INDEX IF NOT EXISTS uq_affinity_scope_user "
         "ON user_affinity(umo, user_id)"
+    )
+    # v4: capture dedup is per session; collapse legacy cross-session dupes
+    sync_conn.exec_driver_sql(
+        "DELETE FROM messages WHERE dedup_hash != '' AND id NOT IN ("
+        "SELECT MIN(id) FROM messages WHERE dedup_hash != '' "
+        "GROUP BY dedup_hash, umo)"
+    )
+    sync_conn.exec_driver_sql(
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_message_dedup "
+        "ON messages(dedup_hash, umo) WHERE dedup_hash != ''"
     )
     for table in _PLUGIN_TABLES:
         for index in table.indexes:

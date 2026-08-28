@@ -34,8 +34,8 @@ bindings = "pyo3"
 strip = true
 manifest-path = "rust/Cargo.toml"
 
-[tool.maturin.target.x86_64-unknown-linux-gnu]
-rustflags = ["-C", "target-cpu=x86-64-v3"]
+# Distributed wheels stay on baseline x86-64: targeting x86-64-v3 emits AVX2
+# codegen that SIGILLs on older CPUs before the Python fallback can engage.
 
 [tool.ruff]
 line-length = 100

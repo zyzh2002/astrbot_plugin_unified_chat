@@ -79,14 +79,15 @@ class MessagePipeline:
 
         text = getattr(event, "message_str", "") or ""
         h = dedup_hash(text)
-        if not text or await repos.MessageRepo.exists_hash(h):
+        umo = getattr(event, "unified_msg_origin", "") or ""
+        if not text or await repos.MessageRepo.exists_hash(h, umo):
             return
         group_id = ""
         with contextlib.suppress(Exception):
             group_id = str(event.get_group_id() or "")
         await repos.MessageRepo.add(
             MessageRecord(
-                umo=getattr(event, "unified_msg_origin", "") or "",
+                umo=umo,
                 sender_id=sender_id,
                 group_id=group_id,
                 content=text,

@@ -7,6 +7,7 @@ import re
 from datetime import UTC, datetime
 
 from sqlalchemy import and_, func, or_, text
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import select
 
 from .database import get_session
@@ -66,8 +67,13 @@ class MessageRepo:
     async def add(record: MessageRecord) -> MessageRecord:
         async with get_session() as session:
             session.add(record)
-            await session.commit()
-            await session.refresh(record)
+            try:
+                await session.commit()
+                await session.refresh(record)
+            except IntegrityError:
+                # lost a race against the uq_message_dedup index; the winner
+                # is already stored and that is enough for capture
+                await session.rollback()
             return record
 
     @staticmethod
@@ -90,11 +96,13 @@ class MessageRepo:
             return int(result.one())
 
     @staticmethod
-    async def exists_hash(h: str) -> bool:
+    async def exists_hash(h: str, umo: str | None = None) -> bool:
+        """Capture dedup is scoped per session (umo) when provided."""
         async with get_session() as session:
-            result = await session.exec(
-                select(MessageRecord.id).where(MessageRecord.dedup_hash == h).limit(1)
-            )
+            stmt = select(MessageRecord.id).where(MessageRecord.dedup_hash == h)
+            if umo is not None:
+                stmt = stmt.where(MessageRecord.umo == umo)
+            result = await session.exec(stmt.limit(1))
             return result.first() is not None
 
 

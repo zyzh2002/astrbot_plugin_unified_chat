@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from sqlalchemy import UniqueConstraint
+from sqlalchemy import Index, UniqueConstraint, text
 from sqlmodel import Field, SQLModel
 
 
@@ -16,6 +16,17 @@ class MessageRecord(SQLModel, table=True):
     """Raw captured messages for learning."""
 
     __tablename__ = "messages"
+    __table_args__ = (
+        # capture dedup is per session: the same text from another umo or a
+        # command echo must still be recorded
+        Index(
+            "uq_message_dedup",
+            "dedup_hash",
+            "umo",
+            unique=True,
+            sqlite_where=text("dedup_hash != ''"),
+        ),
+    )
 
     id: int | None = Field(default=None, primary_key=True)
     umo: str = Field(index=True, max_length=255)

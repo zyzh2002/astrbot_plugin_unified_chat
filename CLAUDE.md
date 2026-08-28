@@ -79,7 +79,7 @@ Rules:
 - **AstrBot import graph is order-sensitive:** deep submodule imports (e.g. `astrbot.core.knowledge_base.kb_helper`) fail with a circular import unless `astrbot.api` is imported first. E2E test modules must `pytest.importorskip("astrbot.api")` before other astrbot imports.
 - **Config:** Parsed config lands at `data/config/<plugin>_config.json`.
 - **RAG:** Use built-in `Context.kb_manager` (`KnowledgeBaseManager`) and `EmbeddingProvider`/`RerankProvider`. Do not vendor a separate vector DB. Agentic mode injects `KnowledgeBaseQueryTool`.
-- **Rust:** `pyproject.toml [tool.maturin] module-name = "unified_chat._native"` `bindings = "pyo3"`. Aggressive release profile (`lto="fat"`, `codegen-units=1`, `strip=true`, `target-cpu=x86-64-v3` for manylinux_2_28). All Rust exports must have a Python fallback in `unified_chat/native/fallback.py`.
+- **Rust:** `pyproject.toml [tool.maturin] module-name = "unified_chat._native"` `bindings = "pyo3"`. Aggressive release profile (`lto="fat"`, `codegen-units=1`, `strip=true`; baseline x86-64 with NO `target-cpu` for distributed wheels, and panics must unwind - never `panic="abort"` in a PyO3 cdylib). All Rust exports must have a Python fallback in `unified_chat/native/fallback.py`.
 - **Isolation:** No global singletons. All state via `Context` injection. Handlers use `functools.partial` binding; `__init__` must not raise — defer to `initialize()`.
 
 ## Docker E2E

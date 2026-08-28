@@ -59,7 +59,7 @@ async def test_upgrade_old_schema_preserves_rows_and_takes_backup(tmp_path):
         assert row[0] == "legacy cobalt fact"
         assert row[1:4] == ("FACTUAL", "", 0)
         assert row[4] is not None
-        assert version == 3
+        assert version == 4
         old_con = sqlite3.connect(backup)
         old_columns = {r[1] for r in old_con.execute("PRAGMA table_info(memories)")}
         old_con.close()
@@ -152,6 +152,63 @@ async def test_migration_keeps_latest_affinity_duplicate(tmp_path):
         ).fetchall()
         con.close()
         assert rows == [(80.0,)]
+    finally:
+        await close_engine()
+        reset_engine_for_tests()
+
+
+@pytest.mark.asyncio
+async def test_v4_migration_scopes_message_dedup(tmp_path):
+    db = tmp_path / "legacy-v3.db"
+    backup = tmp_path / "before4.db"
+    con = sqlite3.connect(db)
+    # a memories table (any schema) is required for _needs_migration to fire
+    con.execute(
+        "CREATE TABLE memories ("
+        "id INTEGER PRIMARY KEY, content TEXT, importance FLOAT, source VARCHAR(64), "
+        "dedup_hash VARCHAR(64), access_count INTEGER, created_at DATETIME, "
+        "last_accessed_at DATETIME)"
+    )
+    con.execute(
+        "CREATE TABLE messages ("
+        "id INTEGER PRIMARY KEY, umo VARCHAR(255), sender_id VARCHAR(255), "
+        "group_id VARCHAR(255), content TEXT, dedup_hash VARCHAR(64), "
+        "created_at DATETIME)"
+    )
+    con.execute("PRAGMA user_version = 3")
+    con.execute(
+        "INSERT INTO messages (umo, sender_id, group_id, content, dedup_hash, created_at) "
+        "VALUES ('a:1', 'u', 'g', 'same text', 'duphash', '2026-01-01'), "
+        "('a:1', 'u', 'g', 'same text', 'duphash', '2026-01-02'), "
+        "('a:2', 'u', 'g', 'same text', 'duphash', '2026-01-03')"
+    )
+    con.commit()
+    con.close()
+
+    def before_migrate():
+        src = sqlite3.connect(db)
+        dst = sqlite3.connect(backup)
+        src.backup(dst)
+        dst.close()
+        src.close()
+        return backup
+
+    await get_engine(db, before_migrate=before_migrate)
+    try:
+        con = sqlite3.connect(db)
+        version = con.execute("PRAGMA user_version").fetchone()[0]
+        rows = con.execute(
+            "SELECT umo FROM messages WHERE dedup_hash = 'duphash' ORDER BY umo"
+        ).fetchall()
+        indexes = {
+            row[1]
+            for row in con.execute("PRAGMA index_list(messages)")
+        }
+        con.close()
+        assert version == 4
+        # same-umo duplicate collapsed (min id kept), cross-umo row kept
+        assert [r[0] for r in rows] == ["a:1", "a:2"]
+        assert "uq_message_dedup" in indexes
     finally:
         await close_engine()
         reset_engine_for_tests()

@@ -6,6 +6,7 @@ resolver = "2"
 opt-level = 3
 lto = "fat"
 codegen-units = 1
-panic = "abort"
+# panic must unwind: PyO3 converts panics into Python exceptions; abort
+# would kill the whole host process instead
 strip = true
 overflow-checks = false

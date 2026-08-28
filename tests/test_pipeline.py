@@ -111,3 +111,33 @@ async def test_log_done_survives_cancelled_task():
     # must not raise CancelledError out of the done-callback
     pipe._log_done(task)
     assert task not in pipe._tasks
+
+
+@pytest.mark.asyncio
+async def test_capture_dedup_is_scoped_per_session(tmp_path):
+    from pathlib import Path
+
+    from unified_chat.storage.database import close_engine, get_engine, reset_engine_for_tests
+    from unified_chat.storage.repo import MessageRepo
+
+    reset_engine_for_tests()
+    with tempfile.TemporaryDirectory() as d:
+        await get_engine(Path(d) / "capture.db")
+        try:
+            svc = ChatService()
+            pipe = MessagePipeline(PluginConfig(), svc)
+            e1 = FakeEvent("identical text", umo="g:g:1")
+            e2 = FakeEvent("identical text", umo="g:g:2")
+            await pipe._capture_message(e1, "alice")
+            await pipe._capture_message(e2, "alice")
+            # same text in a different session must still be captured
+            assert await MessageRepo.count() == 2
+            # repeat in the same session stays deduplicated
+            await pipe._capture_message(e1, "alice")
+            assert await MessageRepo.count() == 2
+        finally:
+            await close_engine()
+            reset_engine_for_tests()
+
+
+import tempfile  # noqa: E402  (used by the capture test above)

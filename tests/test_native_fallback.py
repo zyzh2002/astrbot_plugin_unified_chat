@@ -30,3 +30,18 @@ def test_hash_dedup_deterministic():
 def test_hash_dedup_known_vector():
     assert hash_dedup("hello") == "a430d84680aabd0b"  # FNV-1a 64
     assert hash_dedup("") == "cbf29ce484222325"
+
+
+def test_chunk_text_rejects_negative_overlap():
+    import pytest
+
+    from unified_chat.native.fallback import chunk_text
+
+    with pytest.raises(ValueError):
+        chunk_text("abc", 2, -1)
+
+
+def test_chunk_text_zero_size_returns_empty():
+    from unified_chat.native.fallback import chunk_text
+
+    assert chunk_text("abc", 0, 0) == []

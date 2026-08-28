@@ -310,3 +310,74 @@ class TestChecksumFormats:
         asset = "astrbot_plugin_unified_chat-0.1.0-cp312-abi3-win_amd64.whl"
         sums = f"SHA256 ({asset}) = {digest}\n"
         assert bootstrap._expected_sha256(sums, asset) == digest
+
+
+class TestSha256Sidecar:
+    def _native_dir(self, tmp_path):
+        return tmp_path / "native" / bootstrap.plugin_version()
+
+    def _write_stub(self, monkeypatch, calls):
+        import types as _types
+
+        def fake_import(path):
+            calls.append(path)
+            mod = _types.ModuleType("stub_native")
+            mod.chunk_text = lambda *a, **k: []
+            mod.hash_dedup = lambda *a, **k: "0" * 16
+            mod.score_importance = lambda *a, **k: 0.0
+            return mod
+
+        return fake_import
+
+    def test_tampered_binary_rejected(self, tmp_path, monkeypatch):
+        calls = []
+        monkeypatch.setattr(
+            bootstrap, "_import_extension", self._write_stub(monkeypatch, calls)
+        )
+        native = self._native_dir(tmp_path)
+        native.mkdir(parents=True)
+        binary = native / "_native.cp312-abi3-win_amd64.pyd"
+        binary.write_bytes(b"tampered")
+        import hashlib as _hashlib
+
+        (native / (binary.name + ".sha256")).write_text(
+            _hashlib.sha256(b"original").hexdigest()
+        )
+        assert bootstrap.try_load_cached(tmp_path) is False
+        assert calls == []
+
+    def test_valid_sidecar_loads(self, tmp_path, monkeypatch):
+        calls = []
+        monkeypatch.setattr(
+            bootstrap, "_import_extension", self._write_stub(monkeypatch, calls)
+        )
+        native = self._native_dir(tmp_path)
+        native.mkdir(parents=True)
+        binary = native / "_native.cp312-abi3-win_amd64.pyd"
+        binary.write_bytes(b"payload")
+        import hashlib as _hashlib
+
+        (native / (binary.name + ".sha256")).write_text(
+            _hashlib.sha256(b"payload").hexdigest()
+        )
+        assert bootstrap.try_load_cached(tmp_path) is True
+
+    def test_extract_writes_sidecar(self, tmp_path):
+        import io
+        import zipfile as _zipfile
+
+        wheel_buf = io.BytesIO()
+        with _zipfile.ZipFile(wheel_buf, "w") as zf:
+            zf.writestr("unified_chat/_native.cp312-abi3-win_amd64.so", b"nativebin")
+        bootstrap._extract_native(wheel_buf.getvalue(), tmp_path / "dest")
+        sidecar = next((tmp_path / "dest").glob("*.sha256"))
+        import hashlib as _hashlib
+
+        payload = next(
+            p
+            for p in (tmp_path / "dest").iterdir()
+            if p.suffix == ".so"
+        )
+        assert sidecar.read_text().strip() == _hashlib.sha256(
+            payload.read_bytes()
+        ).hexdigest()

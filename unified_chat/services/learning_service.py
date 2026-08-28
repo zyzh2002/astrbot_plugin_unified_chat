@@ -8,7 +8,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from ..storage import repo as repos
-from ..storage.models import LearningLog, Memory, MessageRecord
+from ..storage.models import LearningLog, Memory
 from ..utils.hashing import dedup_hash
 from .chat_service import ChatService
 
@@ -67,20 +67,8 @@ class LearningService:
             if not self.should_learn(event):
                 return
             text = event.message_str
-            h = dedup_hash(text)
-            if not await repos.MessageRepo.exists_hash(h):
-                group_id = ""
-                with contextlib.suppress(Exception):
-                    group_id = str(event.get_group_id() or "")
-                await repos.MessageRepo.add(
-                    MessageRecord(
-                        umo=event.unified_msg_origin,
-                        sender_id=sender_id,
-                        group_id=group_id,
-                        content=text,
-                        dedup_hash=h,
-                    )
-                )
+            # the capture stage has already recorded this message, so no
+            # MessageRepo.add here — learning only logs its stages
             await repos.LearningLogRepo.add(
                 LearningLog(stage="filter", input_text=text, output_text="", provider_id="")
             )

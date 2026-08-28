@@ -93,7 +93,11 @@ def _bind_facade(module) -> None:
 
 
 def try_load_cached(data_dir: Path) -> bool:
-    """Load a previously prefetched binary; True on success."""
+    """Load a previously prefetched binary; True on success.
+
+    A ``.sha256`` sidecar written at download time is verified before import
+    so a truncated or swapped binary cannot masquerade as the extension.
+    """
     native_dir = Path(data_dir) / "native" / plugin_version()
     if not native_dir.is_dir():
         return False
@@ -102,6 +106,13 @@ def try_load_cached(data_dir: Path) -> bool:
     )
     for path in candidates:
         try:
+            sidecar = path.with_name(path.name + ".sha256")
+            if sidecar.exists():
+                expected = sidecar.read_text(encoding="utf-8").strip().split()[0]
+                actual = hashlib.sha256(path.read_bytes()).hexdigest()
+                if not hmac.compare_digest(actual, expected.lower()):
+                    _log(_logger(), f"cached binary checksum mismatch: {path.name}")
+                    continue
             _import_extension(path)
             return True
         except Exception:
@@ -168,6 +179,11 @@ def _extract_native(wheel_bytes: bytes, dest: Path) -> None:
     tmp = target.with_suffix(target.suffix + ".tmp")
     tmp.write_bytes(payload)
     tmp.replace(target)
+    # sidecar lets try_load_cached re-verify integrity before importing
+    sidecar = target.with_name(target.name + ".sha256")
+    sidecar_tmp = sidecar.with_suffix(sidecar.suffix + ".tmp")
+    sidecar_tmp.write_text(hashlib.sha256(payload).hexdigest() + "\n", encoding="utf-8")
+    sidecar_tmp.replace(sidecar)
 
 
 async def _fetch(url: str) -> bytes:
