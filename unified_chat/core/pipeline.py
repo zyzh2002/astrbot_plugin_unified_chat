@@ -104,6 +104,8 @@ class MessagePipeline:
 
     def _log_done(self, task: asyncio.Task) -> None:
         self._tasks.discard(task)
+        if task.cancelled():
+            return
         with contextlib.suppress(Exception):
             exc = task.exception()
             if exc is not None:

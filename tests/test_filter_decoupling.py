@@ -149,3 +149,19 @@ def test_is_blacklisted_helper():
 
     assert is_blacklisted(Ev(), {"blacklist_users": ["u9"]}) is True
     assert is_blacklisted(Ev(), {"blacklist_users": []}) is False
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_loaded_ok_reflects_startup_result(tmp_path):
+    with patch(
+        "unified_chat.utils.path.resolve_data_dir",
+        lambda raw, ctx: (_ for _ in ()).throw(RuntimeError("no disk")),
+    ):
+        lc = PluginLifecycle(None, FakeContext())
+        await lc.on_load()
+        assert lc.loaded_ok is False
+    lc_ok = await _load(tmp_path, {})
+    try:
+        assert lc_ok.loaded_ok is True
+    finally:
+        await lc_ok.on_unload()

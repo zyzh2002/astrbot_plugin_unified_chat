@@ -44,6 +44,11 @@ class PluginLifecycle:
         self._proactive: Any | None = None
         self._learning_jobs: Any | None = None
 
+    @property
+    def loaded_ok(self) -> bool:
+        """True only when on_load completed without hitting its fail-soft path."""
+        return self._status == "loaded"
+
     async def on_load(self):
         try:
             raw = self._raw_config

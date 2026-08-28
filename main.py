@@ -29,7 +29,8 @@ class UnifiedChatPlugin(Star):
         """Called after handler binding."""
         try:
             await self._lifecycle.on_load()
-            self._initialized = True
+            # on_load is fail-soft; only a "loaded" status means usable services
+            self._initialized = self._lifecycle.loaded_ok
         except Exception as e:  # pragma: no cover
             from astrbot.api import logger
 

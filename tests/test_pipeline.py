@@ -99,3 +99,15 @@ async def test_summary_sees_current_message_when_adaptive_learning_off(tmp_path)
     finally:
         await close_engine()
         reset_engine_for_tests()
+
+
+@pytest.mark.asyncio
+async def test_log_done_survives_cancelled_task():
+    svc = ChatService()
+    pipe = MessagePipeline(PluginConfig(), svc)
+    task = asyncio.create_task(asyncio.sleep(10), name="doomed")
+    task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
+    # must not raise CancelledError out of the done-callback
+    pipe._log_done(task)
+    assert task not in pipe._tasks
