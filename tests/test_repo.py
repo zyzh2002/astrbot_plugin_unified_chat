@@ -233,3 +233,85 @@ async def test_learning_log_repo_delete_older_than():
         assert removed == 1
         assert await LearningLogRepo.count_by_stage("filter") == 1
         await close_engine()
+
+
+@pytest.mark.asyncio
+async def test_fts_reconcile_fixes_desync(monkeypatch):
+    reset_engine_for_tests()
+    with tempfile.TemporaryDirectory() as d:
+        await get_engine(Path(d) / "fts1.db")
+        from sqlalchemy import text
+
+        from unified_chat.storage.database import get_session
+        from unified_chat.storage.models import Memory
+        from unified_chat.storage.repo import MemoryFts, MemoryRepo
+
+        mem_keep = await MemoryRepo.add(
+            Memory(content="fts keep me", dedup_hash="fts1")
+        )
+        mem_orphan = await MemoryRepo.add(
+            Memory(content="fts orphan", dedup_hash="fts2")
+        )
+        assert mem_keep.id is not None and mem_orphan.id is not None
+        await MemoryFts.index_add(mem_keep.id, "fts keep me", "")
+        await MemoryFts.index_add(mem_orphan.id, "fts orphan", "")
+        # simulate a service-level delete that also removed the FTS row,
+        # then hand-delete the main row only -> orphan FTS entry
+        await MemoryFts.index_remove(mem_orphan.id)
+        async with get_session() as session:
+            await session.exec(
+                text("DELETE FROM memories WHERE id = :mid"),
+                params={"mid": mem_orphan.id},
+            )
+            await session.commit()
+        # and a main row missing from FTS (index_add failed silently)
+        mem_missing = await MemoryRepo.add(
+            Memory(content="fts missing from index", dedup_hash="fts3")
+        )
+        orphans, added = await MemoryFts.reconcile()
+        assert orphans == 0 and added == 1
+        hits = await MemoryFts.search("missing", limit=5)
+        assert [mid for mid, _ in hits] == [mem_missing.id]
+        # nothing else broke
+        keep_hits = await MemoryFts.search("keep", limit=5)
+        assert [mid for mid, _ in keep_hits] == [mem_keep.id]
+        await close_engine()
+
+
+@pytest.mark.asyncio
+async def test_fts_index_failure_logs_warning(monkeypatch):
+    reset_engine_for_tests()
+    with tempfile.TemporaryDirectory() as d:
+        await get_engine(Path(d) / "fts2.db")
+        import unified_chat.storage.repo as repo_mod
+
+        warnings = []
+        monkeypatch.setattr(
+            repo_mod, "_log_fts_warning", lambda msg, exc: warnings.append(msg)
+        )
+        # break the FTS table to force index_add failure
+        from sqlalchemy import text
+
+        from unified_chat.storage.database import get_session
+
+        async with get_session() as session:
+            await session.exec(
+                text(
+                    "CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5("
+                    "memory_id UNINDEXED, content, session_id UNINDEXED)"
+                )
+            )
+            await session.commit()
+        monkeypatch.setattr(
+            repo_mod.MemoryFts,
+            "_ensure_table",
+            staticmethod(_raise_ensure),
+        )
+        await repo_mod.MemoryFts.index_add(1, "content", "")
+        await repo_mod.MemoryFts.index_remove(1)
+        assert warnings == ["index_add", "index_remove"]
+        await close_engine()
+
+
+def _raise_ensure(session):
+    raise RuntimeError("fts unavailable")

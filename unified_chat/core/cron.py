@@ -84,6 +84,12 @@ class MemoryCleanupCron:
                 await purge_retention(self.config)
             except Exception:
                 self._log_error("retention purge")
+        try:
+            from ..storage.repo import MemoryFts
+
+            await MemoryFts.reconcile()
+        except Exception:
+            self._log_error("fts reconcile")
         if self.backup_service is not None:
             try:
                 await self.backup_service.daily_tick()

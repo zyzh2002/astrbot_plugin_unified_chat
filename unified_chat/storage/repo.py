@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import re
 from datetime import UTC, datetime
 
@@ -48,6 +49,14 @@ def _utc_wall(now: datetime) -> str:
 def _utc_ts(value: datetime) -> float:
     """Epoch seconds for a value read back from SQLite (naive = UTC wall)."""
     return value.timestamp() if value.tzinfo else value.replace(tzinfo=UTC).timestamp()
+
+
+def _log_fts_warning(msg: str, exc: Exception) -> None:
+    """FTS maintenance failures desync the index; they must stay visible."""
+    with contextlib.suppress(Exception):
+        from astrbot.api import logger  # type: ignore
+
+        logger.warning(f"[unified_chat] fts {msg} failed: {exc}")
 
 
 class MessageRepo:
@@ -159,21 +168,6 @@ class MemoryRepo:
         async with get_session() as session:
             result = await session.exec(select(func.count()).select_from(Memory))
             return int(result.one())
-
-    @staticmethod
-    async def delete_expired(threshold: float, cutoff: datetime) -> int:
-        async with get_session() as session:
-            rows = (
-                await session.exec(
-                    select(Memory)
-                    .where(Memory.importance < threshold)
-                    .where(Memory.created_at < cutoff)
-                )
-            ).all()
-            for r in rows:
-                await session.delete(r)
-            await session.commit()
-            return len(rows)
 
     @staticmethod
     async def list_expired(threshold: float, cutoff: datetime) -> list[Memory]:
@@ -329,8 +323,8 @@ class MemoryFts:
                     },
                 )
                 await session.commit()
-        except Exception:
-            pass  # sparse index is best-effort; keyword fallback remains
+        except Exception as exc:
+            _log_fts_warning("index_add", exc)
 
     @staticmethod
     async def index_remove(memory_id: int) -> None:
@@ -342,8 +336,26 @@ class MemoryFts:
                     params={"mid": int(memory_id)},
                 )
                 await session.commit()
-        except Exception:
-            pass
+        except Exception as exc:
+            _log_fts_warning("index_remove", exc)
+
+    @staticmethod
+    async def reconcile() -> tuple[int, int]:
+        """Drop FTS rows without a main row, index rows missing from FTS."""
+        async with get_session() as session:
+            await MemoryFts._ensure_table(session)
+            removed = await session.exec(
+                text("DELETE FROM memory_fts WHERE memory_id NOT IN (SELECT id FROM memories)")
+            )
+            inserted = await session.exec(
+                text(
+                    "INSERT INTO memory_fts(memory_id, content, session_id) "
+                    "SELECT id, content, session_id FROM memories "
+                    "WHERE content != '' AND id NOT IN (SELECT memory_id FROM memory_fts)"
+                )
+            )
+            await session.commit()
+            return int(removed.rowcount or 0), int(inserted.rowcount or 0)
 
     @staticmethod
     async def search(
