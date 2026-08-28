@@ -234,3 +234,53 @@ class TestHumanizeServiceFlow:
         out = await svc.process(event)
         assert out.allow is False
         assert (state.last_reply_ts, state.consecutive_replies) == before
+
+
+class TestPerSessionSerialization:
+    """Spec 011 R5: decide -> air -> commit must be atomic per session."""
+
+    def test_concurrent_messages_serialize_per_session(self):
+        import asyncio
+
+        from unified_chat.services.humanize_service import HumanizeService
+
+        class AirCfg(Cfg):
+            humanize_air_reading_llm = True
+            humanize_base_probability = 1.0
+
+        order = []
+
+        class SlowAir:
+            async def should_reply(self, lines, text):
+                await asyncio.sleep(0.02)
+                return True
+
+        svc = HumanizeService(object(), AirCfg(), rng=random.Random(1))
+        svc.air = SlowAir()
+
+        real_decide = svc.gate.decide
+        real_commit = svc.gate.commit_reply
+
+        def recording_decide(event, now=None):
+            order.append(f"decide:{event.message_str}")
+            return real_decide(event, now)
+
+        def recording_commit(event, now=None):
+            order.append(f"commit:{event.message_str}")
+            real_commit(event, now)
+
+        svc.gate.decide = recording_decide
+        svc.gate.commit_reply = recording_commit
+
+        async def run():
+            results = await asyncio.gather(
+                svc.process(make_event("one")),
+                svc.process(make_event("two")),
+            )
+            assert all(r.allow for r in results)
+
+        asyncio.run(run())
+        # the second decision must observe the first commit — no stale state
+        commit_one = order.index("commit:one")
+        decide_two = order.index("decide:two")
+        assert commit_one < decide_two, order
