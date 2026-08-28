@@ -126,3 +126,31 @@ async def test_status_async_counts(tmp_path):
     assert "messages=" in status
     assert "needs_migration=no" in status
     await lc.on_unload()
+
+
+@pytest.mark.asyncio
+async def test_on_load_sweeps_stale_migration_flags(tmp_path):
+    from unified_chat.storage.database import get_engine
+
+    await get_engine(tmp_path / "data" / "unified_chat.db")
+    await kv_store.kv_set("migration:kb1:running", "1")
+    await kv_store.kv_set("migration:kb1:last_result", "kept")
+    lc = await _load(tmp_path, {})
+    assert await kv_store.kv_get("migration:kb1:running") is None
+    assert await kv_store.kv_get("migration:kb1:last_result") == "kept"
+    await lc.on_unload()
+
+
+@pytest.mark.asyncio
+async def test_status_async_shows_migration_result(tmp_path):
+    from unified_chat.storage.database import get_engine
+
+    await get_engine(tmp_path / "data" / "unified_chat.db")
+    await kv_store.kv_set(
+        "migration:kb1:last_result", "Migration for 'kb1' done: 2 docs rebuilt."
+    )
+    lc = await _load(tmp_path, {})
+    status = await lc.get_status_async()
+    assert "migration_last=" in status
+    assert "kb1: Migration for 'kb1' done" in status
+    await lc.on_unload()

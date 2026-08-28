@@ -128,3 +128,99 @@ async def test_memory_kb_migration_clears_links(tmp_path):
     assert "1" in result
     all_mems = await MemoryRepo.list_all()
     assert all(m.kb_doc_id is None for m in all_mems)
+
+
+@pytest.mark.asyncio
+async def test_migration_upload_failure_contained(tmp_path):
+    await _db(tmp_path)
+    from unified_chat.storage import kv as kv_store
+
+    docs = [FakeDoc("d1", "d1.txt"), FakeDoc("d2", "d2.txt"), FakeDoc("d3", "d3.txt")]
+    chunks = {
+        "d1": [{"content": "c1"}],
+        "d2": [{"content": "c2"}],
+        "d3": [{"content": "c3"}],
+    }
+
+    class FlakyHelper(FakeKbHelper):
+        async def upload_document(
+            self, file_name, file_content, file_type, pre_chunked_text=None, **kw
+        ):
+            if file_name == "d2.txt":
+                raise RuntimeError("provider down")
+            return await super().upload_document(
+                file_name, file_content, file_type, pre_chunked_text=pre_chunked_text, **kw
+            )
+
+    helper = FlakyHelper(docs, chunks, ["n1", "n2", "n3", "n4"])
+    svc = MigrationService(FakeContext(helper), PluginConfig())
+    result = await svc.run_migration("kb1")
+    assert "failed" in result
+    # untouched docs survive; the failing doc gets a best-effort orphan restore
+    assert "d3" not in helper.deleted
+    assert any(name.startswith("__orphan_") for name, _ in helper.uploads)
+    last = await kv_store.kv_get("migration:kb1:last_result")
+    assert last is not None and "failed" in last
+
+
+@pytest.mark.asyncio
+async def test_stale_running_flag_recovers(tmp_path):
+    await _db(tmp_path)
+    import json
+    import time as _time
+
+    from unified_chat.storage import kv as kv_store
+
+    await kv_store.kv_set(
+        "migration:kb1:running", json.dumps({"started": _time.time() - 7 * 3600})
+    )
+    svc = MigrationService(FakeContext(FakeKbHelper([], {}, [])), PluginConfig())
+    assert not await svc.is_running("kb1")
+    assert await kv_store.kv_get("migration:kb1:running") is None
+
+
+@pytest.mark.asyncio
+async def test_migration_result_persisted_on_success(tmp_path):
+    await _db(tmp_path)
+    from unified_chat.storage import kv as kv_store
+    from unified_chat.storage.repo import LearningLogRepo
+
+    helper = FakeKbHelper([FakeDoc("d1", "d1.txt")], {"d1": [{"content": "c1"}]}, ["n1"])
+    svc = MigrationService(FakeContext(helper), PluginConfig())
+    result = await svc.run_migration("kb1")
+    assert "done" in result
+    last = await kv_store.kv_get("migration:kb1:last_result")
+    assert last is not None and "done" in last
+    assert await LearningLogRepo.count_by_stage("migration") == 1
+
+
+@pytest.mark.asyncio
+async def test_memory_kb_success_updates_snapshot(tmp_path):
+    await _db(tmp_path)
+    from unified_chat.storage import kv as kv_store
+
+    cfg = PluginConfig(
+        memory_kb_name="unified_chat_memories", embedding_provider_id="ep9"
+    )
+    docs = [FakeDoc("d1", "memory_1.txt")]
+    helper = FakeKbHelper(docs, {"d1": [{"content": "m"}]}, ["n1"])
+    svc = MigrationService(FakeContext(helper), cfg)
+    await svc.run_migration("unified_chat_memories")
+    assert await kv_store.kv_get("embedding_provider_snapshot") == "ep9"
+
+
+@pytest.mark.asyncio
+async def test_memory_kb_failure_keeps_snapshot(tmp_path):
+    await _db(tmp_path)
+    from unified_chat.storage import kv as kv_store
+
+    class BoomHelper(FakeKbHelper):
+        async def list_documents(self, offset=0, limit=100, search=None):
+            raise RuntimeError("boom")
+
+    cfg = PluginConfig(
+        memory_kb_name="unified_chat_memories", embedding_provider_id="ep9"
+    )
+    svc = MigrationService(FakeContext(BoomHelper([], {}, [])), cfg)
+    await svc.run_migration("unified_chat_memories")
+    assert await kv_store.kv_get("embedding_provider_snapshot") is None

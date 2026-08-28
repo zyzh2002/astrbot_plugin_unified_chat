@@ -124,17 +124,30 @@ class PluginLifecycle:
 
             from ..storage import kv as kv_store
 
+            # Persist the embedding snapshot only on first boot; afterwards it
+            # is refreshed by a successful memory-KB migration, so a provider
+            # change keeps signalling needs_migration until actually migrated.
             snapshot = await kv_store.kv_get("embedding_provider_snapshot")
             self._needs_migration = bool(
-                snapshot
+                snapshot is not None
                 and config.embedding_provider_id
                 and snapshot != config.embedding_provider_id
             )
-            await kv_store.kv_set("embedding_provider_snapshot", config.embedding_provider_id)
+            if snapshot is None:
+                await kv_store.kv_set(
+                    "embedding_provider_snapshot", config.embedding_provider_id
+                )
 
             from ..services.migration_service import MigrationService
 
             self._migration_service = MigrationService(self.context, config)
+            try:
+                # crash leftovers would block future migrations forever
+                for key in await kv_store.kv_keys_with_prefix("migration:"):
+                    if key.endswith(":running"):
+                        await kv_store.kv_delete(key)
+            except Exception:
+                pass
 
             try:
                 from ..native.bootstrap import plugin_version
@@ -393,6 +406,21 @@ class PluginLifecycle:
             )
         except Exception:
             parts.append("counts=n/a")
+        try:
+            from ..storage import kv as kv_store
+
+            results = []
+            for key in await kv_store.kv_keys_with_prefix("migration:"):
+                if not key.endswith(":last_result"):
+                    continue
+                value = await kv_store.kv_get(key)
+                kb = key[len("migration:") : -len(":last_result")]
+                if value:
+                    results.append(f"{kb}: {value}")
+            if results:
+                parts.append("migration_last=" + " | ".join(results))
+        except Exception:
+            pass
         return " | ".join(parts)
 
     async def migrate_kb(self, event: AstrMessageEvent, kb_name: str) -> str:
@@ -411,12 +439,21 @@ class PluginLifecycle:
         return f"Migration for '{kb_name}' started in background. Check /unified_status."
 
     def _log_migration_done(self, task: asyncio.Task) -> None:
+        self._migration_tasks = [t for t in self._migration_tasks if not t.done()]
+        if task.cancelled():
+            return
         with contextlib.suppress(Exception):
             exc = task.exception()
             if exc is not None:
                 from astrbot.api import logger  # type: ignore
 
                 logger.error(f"[unified_chat] migration task failed: {exc}")
+            else:
+                result = task.result()
+                if result:
+                    from astrbot.api import logger  # type: ignore
+
+                    logger.info(f"[unified_chat] migration finished: {result}")
 
     async def uslang(self, action: str = "", arg: str = "") -> str:
         """Handle /uslang subcommands."""
