@@ -20,12 +20,15 @@ PROMPT_TEMPLATE = (
 class ProactiveService:
     """Periodically checks silence and may send one opener per session."""
 
-    def __init__(self, context: Any, config: Any, rng: random.Random | None = None):
+    def __init__(
+        self, context: Any, config: Any, rng: random.Random | None = None
+    ):
         self.context = context
         self.config = config
         self.rng = rng or random.Random()
         self._task: asyncio.Task | None = None
         self._last_sent: dict[str, float] = {}
+        self.tick_interval = 60.0
 
     def start(self) -> None:
         if self._task is None or self._task.done():
@@ -40,13 +43,16 @@ class ProactiveService:
     async def _run(self) -> None:
         try:
             while True:
-                await asyncio.sleep(60)
-                with contextlib.suppress(Exception):
+                await asyncio.sleep(self.tick_interval)
+                try:
                     await self.tick()
+                except Exception:
+                    # recurring sweep failures must stay visible
+                    self._log_error("tick")
         except asyncio.CancelledError:
             raise
         except Exception:
-            pass  # loop must survive anything
+            self._log_error("loop")
 
     async def tick(self) -> int:
         """One sweep over known sessions; returns number of openers sent."""

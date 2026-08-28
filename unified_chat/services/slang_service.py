@@ -18,7 +18,7 @@ _STOPWORDS = {
     "好", "自己", "这",
 }
 
-_TOKEN_RE = re.compile(r"[A-Za-z]{2,}|[\u4e00-\u9fff]{1,}")
+_TOKEN_RE = re.compile(r"[A-Za-z]{2,}|[\u4e00-\u9fff]{2,}")
 
 
 def mine_terms(texts: list[str], top_k: int = 15, min_count: int = 8) -> list[tuple[str, int]]:
@@ -142,6 +142,8 @@ class SlangService:
                     meaning = meanings.get(term_obj.term)
                     if meaning:
                         await repos.SlangRepo.set_meaning(term_obj.id, meaning)
+                        # advance status so the term is not re-inferred daily
+                        await repos.SlangRepo.set_status(term_obj.id, "inferred")
                         updated += 1
             return updated
         except Exception:

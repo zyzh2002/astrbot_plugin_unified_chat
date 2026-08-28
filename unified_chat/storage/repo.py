@@ -679,16 +679,21 @@ class AffinityRepo:
             return float(result.scalar_one())
 
     @staticmethod
-    async def all_rows(limit: int = 500) -> list[UserAffinity]:
+    async def decay_all(factor: float = 0.9) -> int:
+        """Daily decay toward baseline in one atomic UPDATE (no row cap)."""
+        baseline = float(AffinityRepo.BASELINE)
         async with get_session() as session:
-            rows = (await session.exec(select(UserAffinity).limit(limit))).all()
-            return list(rows)
-
-    @staticmethod
-    async def save_score(row: UserAffinity) -> None:
-        async with get_session() as session:
-            session.add(row)
+            result = await session.exec(
+                text(
+                    "UPDATE user_affinity SET "
+                    "score = MAX(0, MIN(100, :baseline + (score - :baseline) * :factor)), "
+                    "updated_at = CURRENT_TIMESTAMP "
+                    "WHERE ABS(:baseline + (score - :baseline) * :factor - score) >= 0.01"
+                ),
+                params={"baseline": baseline, "factor": float(factor)},
+            )
             await session.commit()
+            return int(result.rowcount or 0)
 
     @staticmethod
     def band(score: float) -> str:

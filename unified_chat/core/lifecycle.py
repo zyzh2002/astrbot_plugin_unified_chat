@@ -492,16 +492,22 @@ class PluginLifecycle:
             return "[uslang] Usage: list | confirm <id> | deny <id>"
         try:
             if action == "list":
+                # inferred terms still await admin review; show full meanings
+                # (truncation hid prompt-injection payloads from the reviewer)
                 pending = await repos.SlangRepo.list_by_status("candidate", limit=15)
+                inferred = await repos.SlangRepo.list_by_status("inferred", limit=15)
                 confirmed = await repos.SlangRepo.list_by_status("confirmed", limit=15)
                 pl = "\n".join(
-                    f"[{t.id}] {t.term} (x{t.count}) {t.meaning[:40]}" for t in pending
+                    f"[{t.id}] {t.term} (x{t.count}) {t.meaning}" for t in pending
                 )
-                cl = "\n".join(
-                    f"[{t.id}] {t.term}: {t.meaning[:40]}" for t in confirmed
+                il = "\n".join(
+                    f"[{t.id}] {t.term} (inferred, x{t.count}) {t.meaning}"
+                    for t in inferred
                 )
+                cl = "\n".join(f"[{t.id}] {t.term}: {t.meaning}" for t in confirmed)
                 return (
                     f"[uslang] candidates:\n{pl or '(none)'}"
+                    f"\ninferred:\n{il or '(none)'}"
                     f"\nconfirmed:\n{cl or '(none)'}"
                 )
             if action in ("confirm", "deny") and arg.isdigit():

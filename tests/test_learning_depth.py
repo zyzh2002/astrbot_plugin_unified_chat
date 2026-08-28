@@ -247,8 +247,6 @@ class TestSlangRepoRoundtrip:
             await asyncio.gather(
                 *(AffinityRepo.bump("s", "u", 1.0) for _ in range(20))
             )
-            rows = await AffinityRepo.all_rows()
-            assert len(rows) == 1
             assert await AffinityLookupRepo.get_score("s", "u") == 70.0
         finally:
             await close_engine()
@@ -307,3 +305,180 @@ class TestSlangIsolation:
         finally:
             await close_engine()
             reset_engine_for_tests()
+
+
+class TestSlangStatusAdvancement:
+    """Spec 011 R6: inferred terms must leave the candidate pool."""
+
+    async def test_inferred_terms_advance_status(self):
+        import tempfile
+        from pathlib import Path
+
+        from unified_chat.services.slang_service import SlangService
+        from unified_chat.storage import repo as repos
+        from unified_chat.storage.database import (
+            close_engine,
+            get_engine,
+            reset_engine_for_tests,
+        )
+        from unified_chat.storage.models import SlangTerm
+
+        class Cfg:
+            slang_infer_enabled = True
+            chat_provider_id = "prov"
+
+        class Resp:
+            completion_text = '{"赞": "很棒", "绝了": "太强了"}'
+
+        class Ctx:
+            calls = 0
+
+            async def llm_generate(self, **kw):
+                Ctx.calls += 1
+                return Resp()
+
+        reset_engine_for_tests()
+        with tempfile.TemporaryDirectory() as d:
+            await get_engine(Path(d) / "slang.db")
+            try:
+                umo = "g:g:9"
+                await repos.SlangRepo.add(SlangTerm(term="赞", umo=umo, count=30))
+                await repos.SlangRepo.add(SlangTerm(term="绝了", umo=umo, count=20))
+                svc = SlangService(Ctx(), Cfg())
+                updated = await svc.infer_pending_meanings()
+                assert updated == 2
+                cands = await repos.SlangRepo.list_by_status("candidate", limit=50)
+                assert [t.term for t in cands] == []
+                inferred = await repos.SlangRepo.list_by_status("inferred", limit=50)
+                assert sorted(t.term for t in inferred) == ["绝了", "赞"]
+                # second run: nothing left to infer -> no LLM call
+                updated2 = await svc.infer_pending_meanings()
+                assert updated2 == 0 and Ctx.calls == 1
+                # terms the LLM could not parse stay candidates for retry
+                await repos.SlangRepo.add(SlangTerm(term="谜语", umo=umo, count=10))
+                class PartialResp:
+                    completion_text = '{"别的": "无关"}'
+                class PartialCtx:
+                    async def llm_generate(self, **kw):
+                        return PartialResp()
+                svc2 = SlangService(PartialCtx(), Cfg())
+                assert await svc2.infer_pending_meanings() == 0
+                assert len(await repos.SlangRepo.list_by_status("candidate", limit=50)) == 1
+            finally:
+                await close_engine()
+                reset_engine_for_tests()
+
+    async def test_uslang_list_shows_full_meaning(self):
+        import tempfile
+        from pathlib import Path
+
+        from unified_chat.core.lifecycle import PluginLifecycle
+        from unified_chat.storage import repo as repos
+        from unified_chat.storage.database import (
+            close_engine,
+            get_engine,
+            reset_engine_for_tests,
+        )
+        from unified_chat.storage.models import SlangTerm
+
+        long_meaning = "这个词条的含义非常长" + "细节" * 30 + "结尾标记"
+        reset_engine_for_tests()
+        with tempfile.TemporaryDirectory() as d:
+            await get_engine(Path(d) / "uslang.db")
+            try:
+                await repos.SlangRepo.add(
+                    SlangTerm(term="长词", umo="g:g:1", count=12, status="inferred")
+                )
+                row = (await repos.SlangRepo.list_by_status("inferred", limit=5))[0]
+                await repos.SlangRepo.set_meaning(row.id, long_meaning)
+                lc = PluginLifecycle(None, object())
+                out = await lc.uslang("list")
+                assert long_meaning in out  # no 40-char truncation
+                assert "长词" in out
+            finally:
+                await close_engine()
+                reset_engine_for_tests()
+
+
+def test_mine_terms_ignores_single_cjk_chars():
+    texts = ["赞 赞 赞 赞 赞 赞 赞 赞"]
+    assert mine_terms(texts, top_k=10, min_count=2) == []
+
+
+class TestComposerBudget:
+    async def test_mood_and_affinity_survive_budget(self):
+        class Cfg:
+            enable_style_learning = True
+            enable_affinity = True
+            enable_mood = True
+
+        class Ev:
+            message_str = "t0 t1 t2 t3 t4 t5 t6 t7 yyds"
+
+        many = [
+            SlangTerm(term=f"t{i}", meaning="x" * 300, umo="", status="confirmed")
+            for i in range(8)
+        ]
+        many[0] = SlangTerm(term="yyds", meaning="ok", umo="", status="confirmed")
+        block = await compose_learning_block(Ev(), Cfg(), many, 85.0, 0.8)
+        assert len(block) <= 800
+        assert "excited" in block  # mood line never truncated away
+        assert "close friend" in block
+
+    async def test_meanings_are_quoted(self):
+        class Cfg:
+            enable_style_learning = True
+            enable_affinity = True
+            enable_mood = True
+
+        class Ev:
+            message_str = "yyds"
+
+        block = await compose_learning_block(
+            Ev(), Cfg(), [SlangTerm(term="yyds", meaning="永远的神", umo="", status="confirmed")],
+            None,
+            0.0,
+        )
+        assert '- yyds: "永远的神"' in block
+
+
+class TestAffinityDecayAll:
+    async def test_single_update_covers_all_rows(self):
+        import tempfile
+        from pathlib import Path
+
+        from sqlalchemy import text as sql_text
+
+        from unified_chat.storage.database import (
+            close_engine,
+            get_engine,
+            get_session,
+            reset_engine_for_tests,
+        )
+        from unified_chat.storage.models import UserAffinity
+        from unified_chat.storage.repo import AffinityRepo
+
+        reset_engine_for_tests()
+        with tempfile.TemporaryDirectory() as d:
+            await get_engine(Path(d) / "decay2.db")
+            try:
+                async with get_session() as session:
+                    for i in range(600):
+                        session.add(UserAffinity(umo=f"s{i}", user_id="u", score=90.0))
+                    await session.commit()
+                changed = await AffinityRepo.decay_all()
+                assert changed == 600
+                async with get_session() as session:
+                    row = (
+                        await session.exec(
+                            sql_text("SELECT score FROM user_affinity WHERE umo = 's599'")
+                        )
+                    ).first()
+                    assert float(row[0]) == pytest.approx(86.0, abs=0.1)
+                # decay again at baseline-ish: no-op rows are not counted
+                changed2 = await AffinityRepo.decay_all()
+                assert changed2 == 600  # 86 -> 82.4 still moves
+                await AffinityRepo.bump("s0", "u", 0.0)  # upsert still works
+            finally:
+                await close_engine()
+                reset_engine_for_tests()

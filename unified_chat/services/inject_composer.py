@@ -14,20 +14,16 @@ async def compose_learning_block(
     affinity_score: float | None,
     mood_scalar: float,
 ) -> str:
-    """Build the combined slang/tone/mood block; "" when nothing applies."""
+    """Build the combined slang/tone/mood block; "" when nothing applies.
+
+    Tone and mood lines are emitted first and never dropped; slang lines are
+    added one by one while the block still fits the budget, so a flood of
+    long meanings cannot truncate the mood signal away.
+    """
     if not getattr(config, "enable_style_learning", True):
         return ""
     parts: list[str] = []
-
-    text = (getattr(event, "message_str", "") or "").lower()
-    hits = [
-        t
-        for t in slang_terms
-        if getattr(t, "meaning", "") and str(t.term).lower() in text
-    ][:8]
-    if hits:
-        lines = "\n".join(f"- {t.term}: {t.meaning}" for t in hits)
-        parts.append(f"Group slang you should understand:\n{lines}")
+    budget = MAX_BLOCK_CHARS
 
     if affinity_score is not None and getattr(config, "enable_affinity", True):
         band = "warm" if affinity_score > 70 else ("cool" if affinity_score < 30 else "neutral")
@@ -38,18 +34,35 @@ async def compose_learning_block(
         }[band]
         if tone:
             parts.append(tone)
+            budget -= len(tone) + 1
 
     if getattr(config, "enable_mood", True):
         label = _mood_label(mood_scalar)
         if label:
-            parts.append(f"Your current mood feels {label}.")
+            mood_line = f"Your current mood feels {label}."
+            parts.append(mood_line)
+            budget -= len(mood_line) + 1
 
-    if not parts:
-        return ""
-    block = "\n".join(parts)
-    if len(block) > MAX_BLOCK_CHARS:
-        block = block[: MAX_BLOCK_CHARS - 1] + "…"
-    return block
+    text = (getattr(event, "message_str", "") or "").lower()
+    hits = [
+        t
+        for t in slang_terms
+        if getattr(t, "meaning", "") and str(t.term).lower() in text
+    ][:8]
+    if hits:
+        header = "Group slang you should understand:"
+        lines: list[str] = [header]
+        used = len(header)
+        for t in hits:
+            line = f'- {t.term}: "{t.meaning}"'
+            if used + 1 + len(line) > budget:
+                break
+            lines.append(line)
+            used += 1 + len(line)
+        if len(lines) > 1:
+            parts.insert(0, "\n".join(lines))
+
+    return "\n".join(parts)
 
 
 def _mood_label(scalar: float) -> str:

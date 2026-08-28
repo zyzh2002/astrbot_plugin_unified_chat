@@ -35,7 +35,9 @@ async def get_mood() -> float:
 
 
 async def set_mood(scalar: float) -> None:
-    await kv_store.kv_set(MOOD_KEY, max(MOOD_MIN, min(MOOD_MAX, float(scalar))))
+    clamped = max(MOOD_MIN, min(MOOD_MAX, float(scalar)))
+    # kv_set is str-typed; store an explicit fixed-precision string
+    await kv_store.kv_set(MOOD_KEY, str(round(clamped, 6)))
 
 
 class DailyLearningJobs:
@@ -61,18 +63,26 @@ class DailyLearningJobs:
             "slang_inferred": 0,
             "persona_suggested": 0,
         }
-        with contextlib.suppress(Exception):
+        try:
             results["affinity_decayed"] = await self._decay_affinity()
-        with contextlib.suppress(Exception):
+        except Exception:
+            _log_error("affinity decay")
+        try:
             results["mood"] = await self._drift_mood()
+        except Exception:
+            _log_error("mood drift")
         if getattr(self.config, "enable_style_learning", True):
             from .slang_service import SlangService
 
             slang = SlangService(self.context, self.config)
-            with contextlib.suppress(Exception):
+            try:
                 results["slang_candidates"] = await slang.refresh_candidates()
-            with contextlib.suppress(Exception):
+            except Exception:
+                _log_error("slang candidates")
+            try:
                 results["slang_inferred"] = await slang.infer_pending_meanings()
+            except Exception:
+                _log_error("slang infer")
         if getattr(self.config, "persona_auto_suggest", False):
             from .persona_review import PersonaReviewService
 
@@ -81,25 +91,17 @@ class DailyLearningJobs:
                 self.config,
                 self.memory_service,
             )
-            with contextlib.suppress(Exception):
+            try:
                 sessions = await repos.MessageScanRepo.distinct_group_umos(limit=10)
                 for session_id, _last_ts in sessions:
                     suggested = await review.maybe_suggest(session_id)
                     results["persona_suggested"] += int(bool(suggested))
+            except Exception:
+                _log_error("persona suggest")
         return results
 
     async def _decay_affinity(self) -> int:
-        rows = await repos.AffinityRepo.all_rows()
-        changed = 0
-        for row in rows:
-            baseline = repos.AffinityRepo.BASELINE
-            new_score = baseline + (row.score - baseline) * 0.9
-            new_score = round(new_score, 2)
-            if abs(new_score - row.score) >= 0.01:
-                row.score = new_score
-                await repos.AffinityRepo.save_score(row)
-                changed += 1
-        return changed
+        return await repos.AffinityRepo.decay_all()
 
     async def _drift_mood(self) -> int:
         current = await get_mood()
